@@ -1,0 +1,323 @@
+// Package app is the actgui application: the window's state, the views that
+// render it, and the act runs it launches.
+package app
+
+import (
+	"actgui/internal/act"
+	"actgui/internal/settings"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
+	"github.com/oneo-me/onevra/source/components"
+	"github.com/oneo-me/onevra/source/shells/plain"
+	"github.com/oneo-me/onevra/source/theme"
+)
+
+// App is the application's state. Views are pure functions of it; act output
+// arrives through runner → pump on the main thread.
+type App struct {
+	win *mygo.Window
+
+	settings   settings.Settings
+	eventSel   string // event dropdown value; "custom" reveals a text field
+	eventOther string
+	workflows  []string
+
+	run     act.Run
+	runner  *act.Runner
+	running bool
+	runErr  string // start or exit error
+	elapsed time.Duration
+	started time.Time
+
+	flushScheduled atomic.Bool
+
+	selJob  string // "" auto-selects the first job
+	logMode int    // 0 steps, 1 raw log
+
+	cfgW    float32 // config pane width
+	jobW    float32 // jobs pane width
+	logUI   logUIState
+	rawLogs map[*act.Job]*rawLog
+}
+
+// logUIState holds view-scoped widget state for the log pane.
+type logUIState struct {
+	list   components.ListState
+	runner components.ListState
+}
+
+// rawLog is the view-side raw log buffer of one job, appended lazily so the
+// read-only view keeps its scroll position.
+type rawLog struct {
+	buf *ui.TextBuffer
+	n   int
+}
+
+// rawLogFor returns the job's raw log buffer, creating it on first use.
+func (a *App) rawLogFor(j *act.Job) *rawLog {
+	if a.rawLogs == nil {
+		a.rawLogs = map[*act.Job]*rawLog{}
+	}
+	rl := a.rawLogs[j]
+	if rl == nil {
+		rl = &rawLog{buf: ui.NewTextBuffer("")}
+		a.rawLogs[j] = rl
+	}
+	return rl
+}
+
+// Run starts the desktop app: it builds the window's shell once mygo is
+// ready, wires the lifecycle, and blocks in the event loop until done. dir,
+// when set, preselects the project; runNow starts act immediately.
+func Run(dir string, runNow bool) error {
+	a := newApp()
+	if dir != "" {
+		a.setDir(dir)
+	}
+	mygo.App.WhenReady(func() {
+		shell := plain.NewShell(plain.ShellOptions{
+			Title:         "act",
+			Width:         1120,
+			Height:        720,
+			MinWidth:      720,
+			MinHeight:     480,
+			StateKey:      "main",
+			Theme:         theme.Onevra,
+			HeaderLeading: a.headerLeading,
+			HeaderActions: a.headerActions,
+			Content:       a.view,
+		})
+		a.win = shell.Window()
+		a.win.OnClosed(func() {
+			a.stopRun()
+			mygo.App.Quit()
+		})
+		if runNow {
+			a.startRun()
+		}
+	})
+	if err := mygo.App.Run(); err != nil {
+		return fmt.Errorf("mygo run: %w", err)
+	}
+	return nil
+}
+
+func newApp() *App {
+	a := &App{
+		settings: *settings.Default(""),
+		eventSel: "push",
+		cfgW:     300,
+		jobW:     240,
+	}
+	a.logUI.list.FollowEnd = true
+	a.logUI.runner.FollowEnd = true
+	a.logUI.runner.Key = func(i int) any { return i }
+	return a
+}
+
+// pickFolder opens the native directory picker off the UI thread, then
+// applies the choice (including .actrc defaults) on it.
+func (a *App) pickFolder() {
+	if a.win == nil {
+		return
+	}
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:    a.win,
+			Title:     "Choose a project folder",
+			Directory: true,
+		})
+		a.win.Update(func() {
+			if err != nil || len(paths) == 0 {
+				return
+			}
+			a.setDir(paths[0])
+		})
+	}()
+}
+
+// setDir points the app at a project: reload .actrc defaults and workflows.
+func (a *App) setDir(dir string) {
+	keep := a.settings.ExtraArgs
+	a.settings = *settings.Default(dir)
+	a.settings.ExtraArgs = keep
+	a.settings.LoadActrc()
+	a.workflows = settings.ScanWorkflows(dir)
+	a.clearRun()
+	if a.settings.Workflow != "" && !contains(a.workflows, a.settings.Workflow) {
+		a.workflows = append(a.workflows, a.settings.Workflow)
+	}
+}
+
+// clearRun drops run state for a fresh directory or a manual clear.
+func (a *App) clearRun() {
+	a.run.Reset()
+	a.runErr = ""
+	a.selJob = ""
+	a.logMode = 0
+	a.elapsed = 0
+	a.rawLogs = nil
+}
+
+// startRun launches act with the current settings.
+func (a *App) startRun() {
+	if a.running || a.settings.Dir == "" || a.win == nil {
+		return
+	}
+	args, err := a.settings.Args()
+	if err != nil {
+		a.runErr = err.Error()
+		return
+	}
+	a.clearRun()
+	r := &act.Runner{}
+	err = r.Start(a.settings.Dir, args, a.scheduleFlush, a.scheduleFlush)
+	if err != nil {
+		a.runErr = fmt.Sprintf("failed to start act: %v", err)
+		return
+	}
+	a.runner = r
+	a.running = true
+	a.started = time.Now()
+}
+
+func (a *App) stopRun() {
+	if a.running && a.runner != nil {
+		a.runner.Stop()
+	}
+}
+
+// scheduleFlush asks the UI thread to drain runner output; coalesced so
+// floods of lines don't flood the main queue. Called from worker goroutines.
+func (a *App) scheduleFlush() {
+	if a.win == nil {
+		return
+	}
+	if a.flushScheduled.CompareAndSwap(false, true) {
+		a.win.Update(func() {
+			a.flushScheduled.Store(false)
+			a.pump()
+		})
+	}
+}
+
+// pump drains buffered act output into the run model, on the main thread.
+func (a *App) pump() {
+	if a.runner == nil {
+		return
+	}
+	lines, done, err := a.runner.Drain()
+	for _, l := range lines {
+		a.run.Feed(l)
+	}
+	if done {
+		// Any lines the scanner delivered after the last drain.
+		lines, _, _ = a.runner.Drain()
+		for _, l := range lines {
+			a.run.Feed(l)
+		}
+		a.running = false
+		a.elapsed = time.Since(a.started)
+		st := act.StatusFailure
+		switch {
+		case err == nil:
+			st = act.StatusSuccess
+		case friendlyExit(err) == "stopped":
+			st = act.StatusCancelled
+		default:
+			// An exit error with a failed job already explains itself in the
+			// job list; only surface it when nothing else does.
+			failed := false
+			for _, j := range a.run.Jobs {
+				failed = failed || j.Status == act.StatusFailure
+			}
+			if !failed {
+				a.runErr = friendlyExit(err)
+			}
+		}
+		a.run.Finish(st)
+	}
+}
+
+// selectedJob resolves the job the log pane shows: the user's choice, or the
+// newest job once output arrives.
+func (a *App) selectedJob() *act.Job {
+	if a.selJob != "" && a.selJob != act.RunnerJobKey {
+		for _, j := range a.run.Jobs {
+			if j.Key == a.selJob {
+				return j
+			}
+		}
+	}
+	if len(a.run.Jobs) > 0 {
+		return a.run.Jobs[0]
+	}
+	return nil
+}
+
+// overallStatus summarizes the run for the header.
+func (a *App) overallStatus() act.Status {
+	if a.running {
+		return act.StatusRunning
+	}
+	if len(a.run.Jobs) == 0 && len(a.run.Runner) == 0 {
+		return act.StatusPending
+	}
+	st := act.StatusSuccess
+	for _, j := range a.run.Jobs {
+		switch j.Status {
+		case act.StatusFailure:
+			return act.StatusFailure
+		case act.StatusRunning, act.StatusPending:
+			st = act.StatusRunning
+		case act.StatusCancelled:
+			st = act.StatusCancelled
+		case act.StatusSuccess, act.StatusSkipped:
+		}
+	}
+	if a.runErr != "" {
+		return act.StatusFailure
+	}
+	return st
+}
+
+func friendlyExit(err error) string {
+	s := err.Error()
+	if strings.Contains(s, "signal: interrupt") || strings.Contains(s, "signal: killed") {
+		return "stopped"
+	}
+	return "act exited: " + s
+}
+
+// cmdline renders the exact command for the preview row.
+func (a *App) cmdline() string {
+	args, err := a.settings.Args()
+	if err != nil {
+		return "act"
+	}
+	var b strings.Builder
+	b.WriteString("act")
+	for _, w := range args {
+		b.WriteByte(' ')
+		if strings.ContainsAny(w, " \t\"'") {
+			fmt.Fprintf(&b, "%q", w)
+		} else {
+			b.WriteString(w)
+		}
+	}
+	return b.String()
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
