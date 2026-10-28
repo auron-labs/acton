@@ -5,6 +5,8 @@ package app
 import (
 	"actgui/internal/act"
 	"actgui/internal/settings"
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -14,7 +16,6 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/shells/plain"
-	"github.com/oneo-me/onevra/source/theme"
 )
 
 // App is the application's state. Views are pure functions of it; act output
@@ -75,22 +76,32 @@ func (a *App) rawLogFor(j *act.Job) *rawLog {
 // ready, wires the lifecycle, and blocks in the event loop until done. dir,
 // when set, preselects the project; runNow starts act immediately.
 func Run(dir string, runNow bool) error {
+	if err := registerFonts(); err != nil {
+		return err
+	}
 	a := newApp()
+	defer func() {
+		a.stopRun()
+		if a.runner != nil {
+			a.runner.Wait()
+		}
+	}()
 	if dir != "" {
 		a.setDir(dir)
 	}
 	mygo.App.WhenReady(func() {
 		shell := plain.NewShell(plain.ShellOptions{
-			Title:         "act",
-			Width:         1120,
-			Height:        720,
-			MinWidth:      720,
-			MinHeight:     480,
-			StateKey:      "main",
-			Theme:         theme.Onevra,
-			HeaderLeading: a.headerLeading,
-			HeaderActions: a.headerActions,
-			Content:       a.view,
+			Title:               "act",
+			Width:               1120,
+			Height:              720,
+			MinWidth:            720,
+			MinHeight:           480,
+			StateKey:            "main",
+			Theme:               designTheme,
+			HeaderLeading:       a.headerLeading,
+			HeaderActions:       a.headerActions,
+			Content:             a.view,
+			ContentBehindHeader: true,
 		})
 		a.win = shell.Window()
 		a.win.OnClosed(func() {
@@ -111,7 +122,7 @@ func newApp() *App {
 	a := &App{
 		settings: *settings.Default(""),
 		eventSel: "push",
-		cfgW:     300,
+		cfgW:     360,
 		jobW:     240,
 	}
 	a.logUI.list.FollowEnd = true
@@ -287,11 +298,10 @@ func (a *App) overallStatus() act.Status {
 }
 
 func friendlyExit(err error) string {
-	s := err.Error()
-	if strings.Contains(s, "signal: interrupt") || strings.Contains(s, "signal: killed") {
+	if errors.Is(err, context.Canceled) {
 		return "stopped"
 	}
-	return "act exited: " + s
+	return "act failed: " + err.Error()
 }
 
 // cmdline renders the exact command for the preview row.

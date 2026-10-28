@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/icons/lucide"
+	"github.com/oneo-me/onevra/source/shells/plain"
 )
 
 // view builds the window content: the resizable configuration | run split.
@@ -21,10 +22,16 @@ func (a *App) view(c *ui.Context) {
 		// Tick elapsed/duration labels while a run is live.
 		c.After(time.Second)
 	}
-	ui.Column(c).Fill().Children(func() {
-		ui.Divider(c)
-		components.Split(c, &a.cfgW, func() { a.configView(c) }, func() { a.runView(c) },
-			components.SplitOptions{FirstMin: 230, SecondMin: 320, Default: 300}).Fill()
+	ui.Column(c).Fill().Background(panelBackground(c)).Padding(plain.HeaderHeight(c), 0, 0, 0).Children(func() {
+		ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
+			ui.Divider(c)
+			if a.settings.Dir == "" {
+				a.emptyRunView(c)
+				return
+			}
+			components.Split(c, &a.cfgW, func() { a.configView(c) }, func() { a.runView(c) },
+				components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 360}).Fill()
+		})
 	})
 }
 
@@ -33,7 +40,7 @@ func (a *App) view(c *ui.Context) {
 func (a *App) headerLeading(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).MinWidth(0).Children(func() {
-		folder := components.Button(c, "", components.ButtonGhost).Label("Choose project folder")
+		folder := components.Button(c, "", components.ButtonSecondary).Label("Choose project folder").Disabled(a.running)
 		folder.Children(func() {
 			ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).MinWidth(0).Children(func() {
 				components.Icon(c, lucide.FolderOpen()).Size(t.Space(4), t.Space(4)).Shrink(0)
@@ -61,7 +68,7 @@ func (a *App) headerActions(c *ui.Context) {
 	ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 		switch st := a.overallStatus(); {
 		case a.running:
-			components.Text(c, time.Since(a.started).Round(time.Second).String()).TextColor(t.TextMuted).Font("monospace").SingleLine()
+			components.Text(c, time.Since(a.started).Round(time.Second).String()).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
 			stop := components.Button(c, "", components.ButtonSecondary).Label("Stop run")
 			stop.Children(func() {
 				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
@@ -75,7 +82,7 @@ func (a *App) headerActions(c *ui.Context) {
 		default:
 			if st.Done() && len(a.run.Jobs)+len(a.run.Runner) > 0 {
 				statusIcon(c, st, 4.5)
-				components.Text(c, a.elapsed.Round(time.Second).String()).TextColor(t.TextMuted).Font("monospace").SingleLine()
+				components.Text(c, a.elapsed.Round(time.Second).String()).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
 			}
 			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow").Disabled(a.settings.Dir == "")
 			run.Children(func() {
@@ -94,8 +101,8 @@ func (a *App) headerActions(c *ui.Context) {
 // configView is the left pane: the run configuration form in a scroll view.
 func (a *App) configView(c *ui.Context) {
 	t := c.Theme()
-	components.ScrollView(c, components.ScrollViewOptions{}).Fill().Padding(t.Space(3)).Children(func() {
-		ui.Column(c).FillWidth().Gap(t.Space(4)).Children(func() {
+	components.ScrollView(c, components.ScrollViewOptions{}).Fill().Background(panelBackground(c)).Padding(t.Space(3)).Children(func() {
+		ui.Column(c).FillWidth().Gap(t.Space(2.5)).Children(func() {
 			sectionTitle(c, "Target")
 			field(c, "Workflow", func() {
 				opts := make([]components.NativeSelectOption[string], 0, len(a.workflows)+1)
@@ -106,7 +113,7 @@ func (a *App) configView(c *ui.Context) {
 				components.NativeSelect(c, &a.settings.Workflow, opts).Trigger.FillWidth().Label("Workflow")
 			})
 			field(c, "Event", func() {
-				ui.Row(c).Gap(t.Space(2)).Children(func() {
+				ui.Column(c).FillWidth().Gap(t.Space(1.5)).Children(func() {
 					events := []string{"push", "pull_request", "workflow_dispatch", "schedule", "release", "issues", "create", "delete", "fork"}
 					opts := make([]components.NativeSelectOption[string], 0, len(events)+1)
 					for _, e := range events {
@@ -114,7 +121,7 @@ func (a *App) configView(c *ui.Context) {
 					}
 					opts = append(opts, components.NativeSelectOption[string]{Value: "custom", Label: "Custom…"})
 					sel := components.NativeSelect(c, &a.eventSel, opts)
-					sel.Trigger.Shrink(0).Label("Event")
+					sel.Trigger.FillWidth().Label("Event")
 					if sel.Changed() {
 						if a.eventSel == "custom" {
 							a.eventOther = a.settings.Event
@@ -124,7 +131,7 @@ func (a *App) configView(c *ui.Context) {
 					}
 					if a.eventSel == "custom" {
 						tb := components.TextBox(c, &a.eventOther, components.TextBoxOptions{}).
-							Placeholder("event name").Label("Custom event name").Grow(1)
+							Placeholder("event name").Label("Custom event name").FillWidth().Background(inputBackground(c))
 						if tb.Changed() {
 							a.settings.Event = a.eventOther
 						}
@@ -132,31 +139,31 @@ func (a *App) configView(c *ui.Context) {
 				})
 			})
 			field(c, "Job", func() {
-				components.TextBox(c, &a.settings.Job, components.TextBoxOptions{}).
-					Placeholder("All jobs").Label("Job ID filter").FillWidth()
+				styleConfigInput(c, components.TextBox(c, &a.settings.Job, components.TextBoxOptions{}).
+					Placeholder("All jobs").Label("Job ID filter"))
 			})
 
 			sectionTitle(c, "Images")
 			field(c, "Platforms", func() {
-				components.TagInput(c, &a.settings.Platforms).Placeholder("runner=image").Label("Platform to image map")
+				styleConfigInput(c, components.TagInput(c, &a.settings.Platforms).Placeholder("runner=image").Label("Platform to image map").Element)
 			})
 			field(c, "Container architecture", func() {
-				components.TextBox(c, &a.settings.Arch, components.TextBoxOptions{}).
-					Placeholder("linux/amd64").Label("Container architecture").FillWidth()
+				styleConfigInput(c, components.TextBox(c, &a.settings.Arch, components.TextBoxOptions{}).
+					Placeholder("linux/amd64").Label("Container architecture"))
 			})
 
 			sectionTitle(c, "Variables")
 			field(c, "Secrets", func() {
-				components.TagInput(c, &a.settings.Secrets).Placeholder("NAME=VALUE").Label("Secrets")
+				styleConfigInput(c, components.TagInput(c, &a.settings.Secrets).Placeholder("NAME=VALUE").Label("Secrets").Element)
 			})
 			field(c, "Environment", func() {
-				components.TagInput(c, &a.settings.Env).Placeholder("NAME=VALUE").Label("Environment variables")
+				styleConfigInput(c, components.TagInput(c, &a.settings.Env).Placeholder("NAME=VALUE").Label("Environment variables").Element)
 			})
 			field(c, "Vars", func() {
-				components.TagInput(c, &a.settings.Vars).Placeholder("NAME=VALUE").Label("Variables")
+				styleConfigInput(c, components.TagInput(c, &a.settings.Vars).Placeholder("NAME=VALUE").Label("Variables").Element)
 			})
 			field(c, "Action inputs", func() {
-				components.TagInput(c, &a.settings.Inputs).Placeholder("name=value").Label("workflow_dispatch inputs")
+				styleConfigInput(c, components.TagInput(c, &a.settings.Inputs).Placeholder("name=value").Label("workflow_dispatch inputs").Element)
 			})
 
 			sectionTitle(c, "Options")
@@ -169,19 +176,19 @@ func (a *App) configView(c *ui.Context) {
 				components.Switch(c, &a.settings.Quiet, "Quiet (no progress)")
 			})
 			field(c, "Event payload file", func() {
-				components.TextBox(c, &a.settings.EventPayload, components.TextBoxOptions{}).
-					Placeholder("path/to/event.json").Label("Event payload JSON file").FillWidth()
+				styleConfigInput(c, components.TextBox(c, &a.settings.EventPayload, components.TextBoxOptions{}).
+					Placeholder("path/to/event.json").Label("Event payload JSON file"))
 			})
 			field(c, "Extra act args", func() {
-				components.TextBox(c, &a.settings.ExtraArgs, components.TextBoxOptions{}).
-					Placeholder("--matrix os:linux …").Label("Additional act flags").FillWidth()
+				styleConfigInput(c, components.TextBox(c, &a.settings.ExtraArgs, components.TextBoxOptions{}).
+					Placeholder("--matrix os:linux …").Label("Additional act flags"))
 			})
 
 			if len(a.settings.ActrcFiles) > 0 {
 				ui.Column(c).Gap(t.Space(1)).Children(func() {
 					components.Text(c, "Defaults from .actrc").FontSize(11).Bold().TextColor(t.TextMuted)
 					for _, f := range a.settings.ActrcFiles {
-						components.Text(c, abbrevHome(f)).FontSize(11).Font("monospace").TextColor(t.TextMuted).MaxLines(2).Ellipsis("…")
+						components.Text(c, abbrevHome(f)).FontSize(11).Font("JetBrains Mono").TextColor(t.TextMuted).MaxLines(2).Ellipsis("…")
 					}
 				})
 			}
@@ -217,11 +224,23 @@ func (a *App) runView(c *ui.Context) {
 func (a *App) emptyRunView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(t.Space(3)).Padding(t.Space(6)).Children(func() {
-		components.Icon(c, lucide.SquareTerminal()).Size(t.Space(12), t.Space(12)).TextColor(t.TextMuted)
 		if a.settings.Dir == "" {
+			components.Icon(c, lucide.FolderOpen()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
+			components.Text(c, "Select a project").FontSize(t.Rem(22.0 / 13)).Bold()
 			components.Text(c, "Pick a project folder to run its workflows with act").TextColor(t.TextMuted)
+			choose := components.Button(c, "", components.ButtonSecondary).Label("Choose project folder")
+			choose.Children(func() {
+				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
+					components.Icon(c, lucide.FolderOpen()).Size(t.Space(3.5), t.Space(3.5))
+					components.Text(c, "Choose project…").SingleLine()
+				})
+			})
+			if choose.Clicked() {
+				a.pickFolder()
+			}
 			return
 		}
+		components.Icon(c, lucide.SquareTerminal()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
 		if len(a.workflows) == 0 {
 			components.Text(c, "No .github/workflows found in this folder — act may fail").TextColor(t.Warning).FontSize(12)
 		}
@@ -230,9 +249,9 @@ func (a *App) emptyRunView(c *ui.Context) {
 			components.Text(c, "Starting act…").TextColor(t.TextMuted)
 		} else {
 			components.Text(c, "Nothing has run yet").TextColor(t.TextMuted)
-			ui.Row(c).MaxWidth(560).Padding(t.Space(1.5), t.Space(3)).Radius(t.Radius).
-				Background(t.Surface.Alpha(.6)).Border(1, t.Border).Children(func() {
-				components.Text(c, a.cmdline()).Font("monospace").FontSize(12).TextColor(t.TextMuted).Selectable()
+			ui.Row(c).FillWidth().MaxWidth(560).Padding(t.Space(3), t.Space(3.5)).Radius(t.Radius).
+				Background(ui.Hex("#07090C")).Border(1, t.Border).Children(func() {
+				components.Text(c, a.cmdline()).FillWidth().Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13)).TextColor(ui.Hex("#C6CFDA")).Selectable()
 			})
 			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow")
 			run.Children(func() {
@@ -292,7 +311,7 @@ func (a *App) jobRow(c *ui.Context, j *act.Job, selected bool) {
 	row := ui.Row(c.Key(j.Key)).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
 	switch {
 	case selected:
-		row.Background(t.Text.Alpha(.09))
+		row.Background(t.Accent.Alpha(.18))
 	case row.Hovered():
 		row.Background(t.Text.Alpha(.04))
 	}
@@ -313,7 +332,7 @@ func (a *App) runnerRow(c *ui.Context, selected bool) {
 	row := ui.Row(c.Key("runner")).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
 	switch {
 	case selected:
-		row.Background(t.Text.Alpha(.09))
+		row.Background(t.Accent.Alpha(.18))
 	case row.Hovered():
 		row.Background(t.Text.Alpha(.04))
 	}
@@ -335,7 +354,7 @@ func (a *App) logPane(c *ui.Context, j *act.Job) {
 			ui.Row(c).Grow(1).MinWidth(0).Gap(t.Space(2)).AlignItems(ui.Center).Clip().Children(func() {
 				components.Text(c, j.Name).Bold().SingleLine()
 				if d := j.Duration(); d != "" {
-					components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("monospace").SingleLine().Shrink(0)
+					components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine().Shrink(0)
 				}
 			})
 			ui.Segmented(c, &a.logMode, "Steps", "Raw log").Shrink(0).Label("Log view mode")
@@ -391,7 +410,7 @@ func (a *App) rawLogView(c *ui.Context, j *act.Job) {
 		rl.n = len(j.Raw)
 	}
 	components.TextBoxBuffer(c, rl.buf, components.TextBoxOptions{Multiline: true, ReadOnly: true}).
-		Fill().Font("monospace").FontSize(12).Label("Raw act output")
+		Fill().Font("JetBrains Mono").FontSize(12).Label("Raw act output")
 }
 
 // linesView renders a plain list of lines (runner output).
@@ -399,7 +418,7 @@ func (a *App) linesView(c *ui.Context, lines []string) {
 	t := c.Theme()
 	components.List(c, &a.logUI.runner, len(lines), func(i int) {
 		ui.Row(c).FillWidth().Padding(0, t.Space(3), 0, 0).Children(func() {
-			ui.Text(c, lines[i]).Font("monospace").FontSize(12).Selectable()
+			ui.Text(c, lines[i]).Font("JetBrains Mono").FontSize(12).Selectable()
 		})
 	}).Fill()
 }
@@ -417,7 +436,7 @@ func (a *App) stepHeaderRow(c *ui.Context, s *act.Step) {
 		ui.Row(c).Grow(1).MinWidth(0).Gap(t.Space(2)).AlignItems(ui.Baseline).Children(func() {
 			components.Text(c, s.Name).SingleLine()
 			if d := s.Duration(); d != "" {
-				components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("monospace").SingleLine().Shrink(0)
+				components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine().Shrink(0)
 			}
 		})
 		chev := lucide.ChevronRight()
@@ -446,7 +465,7 @@ func (a *App) logLineRow(c *ui.Context, r rowRef) {
 		color = t.TextMuted
 	}
 	row.Children(func() {
-		ui.Text(c, r.line).Font("monospace").FontSize(12).TextColor(color).Selectable()
+		ui.Text(c, r.line).Font("JetBrains Mono").FontSize(12).TextColor(color).Selectable()
 	})
 }
 
@@ -511,17 +530,22 @@ func sectionTitle(c *ui.Context, text string) {
 	t := c.Theme()
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(t.Space(2)).Children(func() {
 		components.Text(c, text).FontSize(11).Bold().TextColor(t.TextMuted).SingleLine()
-		ui.Box(c).Grow(1).Height(1).Background(t.Border)
+		ui.Box(c).Grow(1).Height(1).Background(t.Border.Alpha(.65))
 	})
 }
 
 // field renders a labeled form field.
 func field(c *ui.Context, label string, fn func()) {
 	t := c.Theme()
-	ui.Column(c).FillWidth().Gap(t.Space(1)).Children(func() {
-		components.Text(c, label).FontSize(11).TextColor(t.TextMuted).SingleLine()
+	ui.Column(c).FillWidth().Gap(t.Space(1.5)).Children(func() {
+		components.Text(c, label).FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted).SingleLine()
 		fn()
 	})
+}
+
+// styleConfigInput keeps code-like settings consistent across text and tag inputs.
+func styleConfigInput(c *ui.Context, input ui.Element) {
+	input.FillWidth().Font("JetBrains Mono").FontSize(c.Theme().Rem(12.0 / 13)).Background(inputBackground(c))
 }
 
 // abbrevHome shortens a path under the user's home directory for display.

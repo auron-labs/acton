@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kballard/go-shellquote"
 )
 
 // Settings holds the user-configurable act invocation. Fields map to act
@@ -58,6 +60,8 @@ type Settings struct {
 	// platformsDefaulted is true while Platforms still holds the built-in
 	// default; the first -P from an .actrc replaces it instead of appending.
 	platformsDefaulted bool
+	// Preserve explicitly empty .actrc paths, which disable automatic file loading.
+	secretFileSet, envFileSet, varFileSet bool
 }
 
 // Default returns settings used when no .actrc provides a value.
@@ -66,6 +70,7 @@ func Default(dir string) *Settings {
 	return &Settings{
 		Dir:                dir,
 		Event:              "push",
+		Pull:               true,
 		Platforms:          []string{"ubuntu-latest=catthehacker/ubuntu:act-latest"},
 		platformsDefaulted: true,
 	}
@@ -101,15 +106,15 @@ func (s *Settings) applyActrcWord(name, value string, hasValue bool) (ok bool) {
 	case "-s", "--secret":
 		s.Secrets = appendUnique(s.Secrets, value)
 	case "--secret-file":
-		s.SecretFile = value
+		s.SecretFile, s.secretFileSet = value, true
 	case "--env":
 		s.Env = appendUnique(s.Env, value)
 	case "--env-file":
-		s.EnvFile = value
+		s.EnvFile, s.envFileSet = value, true
 	case "--var":
 		s.Vars = appendUnique(s.Vars, value)
 	case "--var-file":
-		s.VarFile = value
+		s.VarFile, s.varFileSet = value, true
 	case "--input":
 		s.Inputs = appendUnique(s.Inputs, value)
 	case "-e", "--eventpath":
@@ -223,12 +228,7 @@ func (s *Settings) applyActrcLine(line string) {
 }
 
 func (s *Settings) appendExtra(words ...string) {
-	for _, w := range words {
-		if s.ExtraArgs != "" {
-			s.ExtraArgs += " "
-		}
-		s.ExtraArgs += w
-	}
+	s.ExtraArgs = strings.TrimSpace(s.ExtraArgs + " " + shellquote.Join(words...))
 }
 
 // splitWords splits a shell-style flag line into words, honoring single and
@@ -309,7 +309,7 @@ func (s *Settings) Args() ([]string, error) {
 			args = append(args, "-s", v)
 		}
 	}
-	if v := strings.TrimSpace(s.SecretFile); v != "" {
+	if v := strings.TrimSpace(s.SecretFile); v != "" || s.secretFileSet {
 		args = append(args, "--secret-file", v)
 	}
 	for _, v := range s.Env {
@@ -317,7 +317,7 @@ func (s *Settings) Args() ([]string, error) {
 			args = append(args, "--env", v)
 		}
 	}
-	if v := strings.TrimSpace(s.EnvFile); v != "" {
+	if v := strings.TrimSpace(s.EnvFile); v != "" || s.envFileSet {
 		args = append(args, "--env-file", v)
 	}
 	for _, v := range s.Vars {
@@ -325,7 +325,7 @@ func (s *Settings) Args() ([]string, error) {
 			args = append(args, "--var", v)
 		}
 	}
-	if v := strings.TrimSpace(s.VarFile); v != "" {
+	if v := strings.TrimSpace(s.VarFile); v != "" || s.varFileSet {
 		args = append(args, "--var-file", v)
 	}
 	for _, v := range s.Inputs {
@@ -344,6 +344,8 @@ func (s *Settings) Args() ([]string, error) {
 	}
 	if s.Pull {
 		args = append(args, "-p")
+	} else {
+		args = append(args, "--pull=false")
 	}
 	if s.Reuse {
 		args = append(args, "-r")

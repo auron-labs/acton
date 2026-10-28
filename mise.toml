@@ -1,10 +1,21 @@
+# Prerequisites: Git for checks, a running Docker engine for act workflows,
+# and Xcode command-line tools for native macOS development and packaging.
 [tools]
 betterleaks = "1.9.0"
 go = "1.27.3"
 golangci-lint = "2.15.0"
 hk = { version = "2.9.0", workflow = "release.yml" }
 "npm:@ls-lint/ls-lint" = "2.3.2"
+node = "26.12.1"
 pkl = "0.32.2"
 
 [env]
 BETTERLEAKS_CONFIG = "{{ config_root }}/.betterleaks.toml"
+
+[tasks]
+dev = "go tool mygo dev"
+build = "go tool mygo build"
+test = "go test ./..."
+lint = "golangci-lint run ./..."
+check = "hk check --all"
+fix = "hk fix --all"

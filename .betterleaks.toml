@@ -1,6 +1,14 @@
 [extend]
 useDefault = true
 
+# Pen stores its document UUID as fileToken, which is not an API credential.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['^actgui\.pen$']
+regexTarget = "line"
+regexes = ['''^\s*"fileToken": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\s*$''']
+
 # Limit the exemption to passwords used as test fixtures; other secret rules
 # continue to scan these files.
 [[allowlists]]

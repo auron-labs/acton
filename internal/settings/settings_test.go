@@ -9,6 +9,9 @@ import (
 )
 
 func TestActrcParsing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
 	dir := t.TempDir()
 	rc := `# comment
 -P ubuntu-latest=catthehacker/ubuntu:act-22.04
@@ -68,7 +71,7 @@ func TestArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(args, " ")
-	want := `push -W .github/workflows/ci.yml -j test -P ubuntu-latest=catthehacker/ubuntu:act-latest -s A=1 --env B=2 --input name=x -n -v --json=true`
+	want := `push -W .github/workflows/ci.yml -j test -P ubuntu-latest=catthehacker/ubuntu:act-latest -s A=1 --env B=2 --input name=x -n -v -p --json=true`
 	if got != want {
 		t.Fatalf("args\n got: %s\nwant: %s", got, want)
 	}
@@ -82,12 +85,12 @@ func TestArgsRequiresJSON(t *testing.T) {
 	}{
 		{
 			name: "zero settings",
-			want: []string{"push", "--json=true"},
+			want: []string{"push", "--pull=false", "--json=true"},
 		},
 		{
 			name:  "extra args cannot disable JSON",
 			extra: `--json=false --env "MESSAGE=hello world"`,
-			want:  []string{"push", "--json=false", "--env", "MESSAGE=hello world", "--json=true"},
+			want:  []string{"push", "--pull=false", "--json=false", "--env", "MESSAGE=hello world", "--json=true"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,7 +126,7 @@ func TestArgsActrcCannotDisableJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"push", "--json=false", "--json=true"}
+	want := []string{"push", "--pull=false", "--json=false", "--json=true"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args\n got: %q\nwant: %q", got, want)
 	}
@@ -154,5 +157,33 @@ func TestScanWorkflows(t *testing.T) {
 	got := ScanWorkflows(dir)
 	if len(got) != 2 {
 		t.Fatalf("workflows=%v", got)
+	}
+}
+
+func TestActrcExtraArgsPreserveQuoting(t *testing.T) {
+	s := Default(t.TempDir())
+	s.applyActrcLine(`--container-options "--cpus 2"`)
+	args, err := s.Args()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args[len(args)-3] != "--container-options" || args[len(args)-2] != "--cpus 2" {
+		t.Fatalf("quoted arguments lost: %q", args)
+	}
+}
+
+func TestActrcExplicitFalseAndEmpty(t *testing.T) {
+	s := Default(t.TempDir())
+	s.applyActrcLine(`--pull=false`)
+	s.applyActrcLine(`--secret-file ""`)
+	s.applyActrcLine(`--env-file ""`)
+	s.applyActrcLine(`--var-file ""`)
+	args, err := s.Args()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"push", "-P", "ubuntu-latest=catthehacker/ubuntu:act-latest", "--secret-file", "", "--env-file", "", "--var-file", "", "--pull=false", "--json=true"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("explicit .actrc values lost: %q", args)
 	}
 }

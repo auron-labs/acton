@@ -1,151 +1,238 @@
 package act
 
 import (
-	"bufio"
-	"encoding/json"
+	"context"
 	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
-func TestRunnerDoneWaitsForOutput(t *testing.T) {
-	old := actBin
-	actBin = "sh"
-	defer func() { actBin = old }()
-
-	const pairs = 4000
-	const records = 2 * pairs
-	readerBlocked := make(chan struct{})
-	releaseReader := make(chan struct{})
-	release := sync.OnceFunc(func() { close(releaseReader) })
-	defer release()
-	completed := make(chan struct{})
-	var r Runner
-	flushed := 0
-	script := `i=0
-while [ "$i" -lt 4000 ]; do
-    printf '{"index":%s,"stream":"stdout"}\n' "$i"
-    printf '{"index":%s,"stream":"stderr"}\n' "$i" >&2
-    i=$((i + 1))
-done`
-	if err := r.Start(t.TempDir(), []string{"-c", script}, func() {
-		flushed++
-		if flushed == records-1 {
-			close(readerBlocked)
-			<-releaseReader
-		}
-	}, func() { close(completed) }); err != nil {
+func workflowProject(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(path, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(r.Stop)
-
-	select {
-	case <-readerBlocked:
-	case <-time.After(10 * time.Second):
-		t.Fatal("reader did not reach the final output")
+	if err := os.WriteFile(filepath.Join(path, "ci.yml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	// The shell can exit while the reader is paused with one record left.
+	return dir
+}
+
+const testWorkflow = `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check
+        run: printf 'hello\n'
+`
+
+func startRunner(t *testing.T, dir string, args []string, flush func()) (*Runner, <-chan struct{}) {
+	t.Helper()
+	r := &Runner{}
+	complete := make(chan struct{})
+	if err := r.Start(dir, args, flush, func() { close(complete) }); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Stop(); r.Wait() })
+	return r, complete
+}
+
+func finishRunner(t *testing.T, r *Runner, complete <-chan struct{}) ([]string, error) {
+	t.Helper()
 	select {
-	case <-completed:
-		t.Fatal("onDone called before the reader finished")
-	case <-time.After(100 * time.Millisecond):
+	case <-complete:
+	case <-time.After(30 * time.Second):
+		t.Fatal("embedded run did not finish")
 	}
 	lines, done, err := r.Drain()
-	if done || err != nil {
-		t.Fatalf("Drain before reader finished: done=%v err=%v", done, err)
+	if !done {
+		t.Fatal("completion callback preceded done status")
 	}
-	release()
-
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		batch, done, err := r.Drain()
-		lines = append(lines, batch...)
-		if done {
-			if err != nil {
-				t.Fatalf("run failed: %v", err)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("run did not finish")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if len(lines) != records {
-		t.Fatalf("Drain reported done with %d records, want %d", len(lines), records)
-	}
-	for i, line := range lines {
-		var record struct {
-			Index  int    `json:"index"`
-			Stream string `json:"stream"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("record %d: %v", i, err)
-		}
-		wantStream := "stdout"
-		if i%2 != 0 {
-			wantStream = "stderr"
-		}
-		if record.Index != i/2 || record.Stream != wantStream {
-			t.Fatalf("record %d: got %+v, want index=%d stream=%s", i, record, i/2, wantStream)
-		}
-	}
-	select {
-	case <-completed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("onDone was not called")
-	}
+	return lines, err
 }
 
-func TestRunnerScannerError(t *testing.T) {
-	old := actBin
-	actBin = "sh"
-	defer func() { actBin = old }()
-
-	completed := make(chan struct{})
-	var r Runner
-	if err := r.Start(t.TempDir(), []string{"-c", "printf '%04194304d\\n' 0"}, func() {}, func() {
-		close(completed)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(r.Stop)
+func TestRunnerDoneWaitsForOutput(t *testing.T) {
+	dir := workflowProject(t, testWorkflow)
+	previousHost, hostWasSet := os.LookupEnv("DOCKER_HOST")
+	t.Setenv("PATH", t.TempDir()) // No act executable, shell, or gh is available.
+	blocked, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	var once sync.Once
+	r, complete := startRunner(t, dir, []string{"push", "-n", "-P", "ubuntu-latest=unused", "--no-cache-server"}, func() {
+		once.Do(func() { close(blocked); <-release })
+	})
+	defer unblock()
 	select {
-	case <-completed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("run did not finish after scanner error")
+	case <-blocked:
+	case <-time.After(15 * time.Second):
+		t.Fatal("no workflow output")
+	}
+	select {
+	case <-complete:
+		t.Fatal("onDone ran before logging finished")
+	default:
 	}
 	_, done, err := r.Drain()
-	if !done || !errors.Is(err, bufio.ErrTooLong) {
-		t.Fatalf("Drain: done=%v err=%v, want scanner token-too-long error", done, err)
+	if done || err != nil {
+		t.Fatalf("premature completion: done=%v err=%v", done, err)
+	}
+	var second Runner
+	if err := second.Start(dir, nil, func() {}, func() {}); err == nil {
+		t.Fatal("accepted concurrent embedded execution")
+	}
+	unblock()
+	lines, err := finishRunner(t, r, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host, set := os.LookupEnv("DOCKER_HOST"); host != previousHost || set != hostWasSet {
+		t.Fatal("Docker environment was not restored")
+	}
+	var run Run
+	for _, line := range lines {
+		run.Feed(line)
+	}
+	if len(run.Jobs) != 1 || run.Jobs[0].Status != StatusSuccess {
+		t.Fatalf("unexpected jobs: %+v\n%s", run.Jobs, strings.Join(lines, "\n"))
 	}
 }
 
-// TestRunnerStop starts a stand-in process and checks Stop interrupts the
-// whole process group and reports done.
-func TestRunnerStop(t *testing.T) {
-	old := actBin
-	actBin = "sleep"
-	defer func() { actBin = old }()
+// shortcut: act v0.2.89 has host PTY races/output loss; upgrade when upstream fixes them.
+func TestRunnerWorkflow(t *testing.T) {
+	platforms := []string{"-self-hosted"}
+	if image := os.Getenv("ACTGUI_TEST_IMAGE"); image != "" {
+		platforms = append(platforms, image)
+	}
+	for _, platform := range platforms {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail=%v", platform, fail), func(t *testing.T) {
+				script := `printf '%s\n' '${{ secrets.SAMPLE }}' '::add-mask::dynamic-value' 'dynamic-value' 'hello'`
 
-	var r Runner
-	if err := r.Start(t.TempDir(), []string{"60"}, func() {}, func() {}); err != nil {
-		t.Fatal(err)
+				body := strings.Replace(testWorkflow, `printf 'hello\n'`, script, 1)
+				if fail {
+					body += "      - name: fail\n        run: exit 3\n"
+				}
+				dir := workflowProject(t, body)
+				if err := os.WriteFile(filepath.Join(dir, ".secrets"), []byte("SAMPLE=private-value\nGITHUB_TOKEN=\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{"push", "-P", "ubuntu-latest=" + platform, "--pull=false", "--action-cache-path", filepath.Join(t.TempDir(), "actions"), "--no-cache-server"}
+				r, complete := startRunner(t, dir, args, func() {})
+				lines, err := finishRunner(t, r, complete)
+				if (err != nil) != fail {
+					t.Fatalf("failure=%v, err=%v\n%s", fail, err, strings.Join(lines, "\n"))
+				}
+				output := strings.Join(lines, "\n")
+				if strings.Contains(output, "private-value") || strings.Contains(output, "dynamic-value") {
+					t.Fatalf("fixture secrets or add-mask values leaked into logs:\n%s", output)
+				}
+				var run Run
+				for _, line := range lines {
+					run.Feed(line)
+				}
+				want := StatusSuccess
+				if fail {
+					want = StatusFailure
+				}
+				if len(run.Jobs) != 1 || run.Jobs[0].Status != want || !strings.Contains(output, "hello") || !strings.Contains(output, "***") {
+					t.Fatalf("unexpected workflow result: %+v\n%s", run.Jobs, output)
+				}
+			})
+		}
+	}
+}
+
+func TestRunnerStop(t *testing.T) {
+	dir := workflowProject(t, strings.Replace(testWorkflow, `printf 'hello\n'`, `printf 'waiting\n'; exec sleep 60`, 1))
+	waiting := make(chan struct{})
+	var once sync.Once
+	var r *Runner
+	// The log callback runs only after Start has returned and assigned r.
+	started := make(chan struct{})
+	r, complete := startRunner(t, dir, []string{"push", "-P", "ubuntu-latest=-self-hosted", "--no-cache-server", "--action-cache-path", t.TempDir()}, func() {
+		<-started
+		lines, _, _ := r.Drain()
+		for _, line := range lines {
+			if strings.Contains(line, `"raw_output":true`) && strings.Contains(line, "waiting") {
+				once.Do(func() { close(waiting) })
+			}
+		}
+	})
+	close(started)
+	select {
+	case <-waiting:
+	case <-complete:
+		t.Fatal("run finished before cancellation")
+	case <-time.After(15 * time.Second):
+		t.Fatal("workflow did not start")
 	}
 	r.Stop()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		_, done, err := r.Drain()
-		if done {
+	r.Stop()
+	_, err := finishRunner(t, r, complete)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want cancellation", err)
+	}
+}
+
+func TestRunnerErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		args       []string
+	}{
+		{"invalid YAML", "on: [", nil},
+		{"unmatched event", testWorkflow, []string{"pull_request"}},
+		{"unmatched job", testWorkflow, []string{"push", "-j", "missing"}},
+		{"missing event file", testWorkflow, []string{"push", "-e", "missing.json"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := workflowProject(t, tt.body)
+			r, complete := startRunner(t, dir, tt.args, func() {})
+			_, err := finishRunner(t, r, complete)
 			if err == nil {
-				t.Fatal("stopped run should report a nonzero exit")
+				t.Fatal("expected workflow error")
 			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("run did not stop")
-		}
-		time.Sleep(10 * time.Millisecond)
+		})
+	}
+}
+
+func TestRunnerLargeOutput(t *testing.T) {
+	r := &Runner{onFlush: func() {}, level: logrus.InfoLevel}
+	logger := r.WithJobLogger()
+	message := strings.Repeat("x", 4<<20)
+	logger.Info(message)
+	lines, done, err := r.Drain()
+	if done || err != nil || len(lines) != 1 || !strings.Contains(lines[0], message) {
+		t.Fatal("large log record was lost")
+	}
+}
+
+func TestRunnerArtifactServerFailure(t *testing.T) {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := workflowProject(t, strings.Replace(testWorkflow, `printf 'hello\n'`, `exec sleep 60`, 1))
+	r, complete := startRunner(t, dir, []string{"push", "-P", "ubuntu-latest=-self-hosted", "--no-cache-server", "--action-cache-path", t.TempDir(), "--artifact-server-path", t.TempDir(), "--artifact-server-addr", "127.0.0.1", "--artifact-server-port", port}, func() {})
+	_, err = finishRunner(t, r, complete)
+	if err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "server failed") {
+		t.Fatalf("server failure misreported: %v", err)
 	}
 }

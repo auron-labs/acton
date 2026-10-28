@@ -1,4 +1,4 @@
-// Package act runs the act CLI and models its JSON output as a Run/Job/Step tree.
+// Package act embeds the act runner and models its JSON output as a Run/Job/Step tree.
 package act
 
 import (

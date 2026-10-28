@@ -2,11 +2,12 @@ package app
 
 import (
 	"actgui/internal/act"
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/oneo-me/onevra/source/theme"
 )
 
 func feed(r *act.Run, lines ...string) {
@@ -20,7 +21,7 @@ func TestViewSmoke(t *testing.T) {
 	a := newApp()
 	a.settings.Dir = "/tmp/proj"
 	tt := ui.NewTester(func(c *ui.Context) {
-		theme.Apply(c)
+		c.SetTheme(designTheme(c))
 		a.view(c)
 	}, 1120, 720)
 
@@ -78,5 +79,79 @@ func TestViewSmoke(t *testing.T) {
 	tt.Frame()
 	if !strings.Contains(a.rawLogFor(a.run.Jobs[0]).buf.String(), "Post cleanup") {
 		t.Fatalf("raw buffer did not append new lines")
+	}
+}
+
+func TestProjectSelectionAndConfiguration(t *testing.T) {
+	if err := registerFonts(); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp()
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(designTheme(c))
+		a.view(c)
+	}, 1120, 720)
+	if !tt.HasText("Select a project") || !tt.HasText("Choose project…") || tt.HasText("Workflow") {
+		t.Fatalf("expected project picker without settings: %q", tt.Texts())
+	}
+	a.setDir(t.TempDir())
+	tt.Frame()
+	if tt.HasText("Select a project") || !tt.HasText("Workflow") || !tt.HasText("Nothing has run yet") {
+		t.Fatalf("expected configured project: %q", tt.Texts())
+	}
+	if err := tt.Click("push"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("Custom…"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Custom event name"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("deployment")
+	if a.settings.Event != "deployment" {
+		t.Fatalf("custom event not applied: %q", a.settings.Event)
+	}
+	if err := tt.Click("Job ID filter"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("build")
+	if a.settings.Job != "build" {
+		t.Fatalf("job filter not applied: %q", a.settings.Job)
+	}
+	tt.SetSize(720, 480)
+	tt.SetDark(true)
+	if !tt.HasText("Nothing has run yet") {
+		t.Fatalf("run area missing at minimum size: %q", tt.Texts())
+	}
+	// The compact pane remains scrollable, so its final field can be edited.
+	tt.Scroll(150, 350, 0, 1400)
+	if err := tt.Click("Additional act flags"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Type("--offline")
+	if a.settings.ExtraArgs != "--offline" {
+		t.Fatalf("last configuration field not editable: %q", a.settings.ExtraArgs)
+	}
+}
+
+func TestFriendlyExitCancellation(t *testing.T) {
+	if got := friendlyExit(fmt.Errorf("workflow: %w", context.Canceled)); got != "stopped" {
+		t.Fatalf("cancellation: %q", got)
+	}
+}
+
+func TestMinimumWindowPreservesLogSpace(t *testing.T) {
+	a := newApp()
+	a.settings.Dir = "/tmp/proj"
+	feed(&a.run, `{"job":"CI/build","step":"go test","stepID":["test"],"stage":"Main","msg":"⭐ Run Main go test"}`)
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(designTheme(c))
+		a.view(c)
+	}, 720, 480)
+	log, ok := tt.Find("Step go test")
+	if !ok || log.W < 260 {
+		t.Fatalf("log pane too narrow at minimum window size: %+v", log)
 	}
 }

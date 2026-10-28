@@ -1,116 +1,262 @@
 package act
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/nektos/act/pkg/artifactcache"
+	"github.com/nektos/act/pkg/artifacts"
+	"github.com/nektos/act/pkg/common"
+	"github.com/nektos/act/pkg/container"
+	"github.com/nektos/act/pkg/gh"
+	"github.com/nektos/act/pkg/model"
+	actrunner "github.com/nektos/act/pkg/runner"
+	"github.com/sirupsen/logrus"
 )
 
-// actBin is the act executable; tests swap it for a stub.
-var actBin = "act"
+// act uses a process-wide logger and reads DOCKER_HOST from the environment.
+var executionMu sync.Mutex
 
-// Runner runs one act process, buffers its combined output, and lets the
-// UI drain it on the main thread. The process streams both stdout (the
-// [job] progress log) and stderr (act's own log lines) through one pipe so
-// ordering is preserved.
+// Runner executes one embedded act plan and buffers JSON logs for the UI.
 type Runner struct {
-	mu      sync.Mutex
-	pending []string
-
-	cmd   *exec.Cmd
-	timer *time.Timer
-
-	done    bool
-	exitErr error
+	mu                  sync.Mutex
+	pending             []string
+	cancel, forceCancel context.CancelFunc
+	timer               *time.Timer
+	finished            chan struct{}
+	done                bool
+	exitErr             error
+	onFlush             func()
+	level               logrus.Level
 }
 
-// Start launches act in dir with args. onFlush is called from a worker each
-// time output is buffered (at most ~15/s); it must schedule a UI update.
-// onDone is called from a worker after the process exits and all output has
-// been buffered; it must also schedule a UI update.
+// Start validates flags, then loads and executes the workflow off the UI thread.
+// Callbacks run on workers and must schedule UI updates.
 func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	//nolint:gosec // G204: launching act with the configured args is the app.
-	cmd := exec.CommandContext(ctx, actBin, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CLICOLOR=0", "CLICOLOR_FORCE=0")
-	// Kill the whole process group on cancel so docker exec children die too.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		return cmd.Process.Signal(syscall.SIGINT)
-	}
-	// If a child keeps our pipe open after act exits, don't wait forever.
-	cmd.WaitDelay = 5 * time.Second
-
-	pr, pw, err := os.Pipe()
+	o, err := parseOptions(dir, args)
 	if err != nil {
-		cancel()
-		return fmt.Errorf("pipe: %w", err)
+		return err
 	}
-	cmd.Stdout, cmd.Stderr = pw, pw
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		_ = pw.Close()
-		_ = pr.Close()
-		return fmt.Errorf("start %s: %w", actBin, err)
+	if !executionMu.TryLock() {
+		return errors.New("an act run is already active")
 	}
-	r.cmd = cmd
-
-	// Read lines into pending; close the write end when the process exits.
-	readDone := make(chan error, 1)
+	r.mu.Lock()
+	if r.finished != nil {
+		r.mu.Unlock()
+		executionMu.Unlock()
+		return errors.New("runner has already been started")
+	}
+	ctx, forceCancel := context.WithCancel(context.Background())
+	jobCtx, cancel := context.WithCancel(ctx)
+	ctx = common.WithJobCancelContext(ctx, jobCtx)
+	r.cancel, r.forceCancel = cancel, forceCancel
+	r.finished = make(chan struct{})
+	r.onFlush = onFlush
+	r.level = logrus.InfoLevel
+	if o.verbose {
+		r.level = logrus.DebugLevel
+	}
+	r.mu.Unlock()
 	go func() {
-		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
-		for sc.Scan() {
-			r.mu.Lock()
-			r.pending = append(r.pending, sc.Text())
-			r.mu.Unlock()
-			onFlush()
-		}
-		_ = pr.Close()
-		readDone <- sc.Err()
-	}()
-
-	go func() {
-		err := cmd.Wait()
-		_ = pw.Close()
-		cancel()
-		err = errors.Join(err, <-readDone)
+		err := r.execute(ctx, o)
 		r.mu.Lock()
-		r.done = true
+		switch {
+		case r.exitErr != nil:
+			err = r.exitErr
+		case jobCtx.Err() != nil:
+			err = context.Canceled
+		}
 		r.exitErr = err
+		if r.timer != nil {
+			r.timer.Stop()
+		}
+		cancel()
+		forceCancel()
+		r.done = true
+		executionMu.Unlock()
+		close(r.finished)
 		r.mu.Unlock()
 		onDone()
 	}()
 	return nil
 }
 
-// Stop interrupts the process group, then kills it after a grace period.
+func (r *Runner) execute(ctx context.Context, o *options) (err error) {
+	logger := r.WithJobLogger()
+	// Some act packages log outside the context; restore the host logger after the run.
+	standard := logrus.StandardLogger()
+	output, formatter, level, exit := standard.Out, standard.Formatter, standard.GetLevel(), standard.ExitFunc
+	standard.SetOutput(r)
+	standard.SetFormatter(&logFormatter{})
+	standard.SetLevel(r.level)
+	standard.ExitFunc = func(int) { r.fail(errors.New("act failed; see runner output")) }
+	defer func() {
+		standard.SetOutput(output)
+		standard.SetFormatter(formatter)
+		standard.SetLevel(level)
+		standard.ExitFunc = exit
+	}()
+	ctx = common.WithLogger(ctx, logger)
+	ctx = actrunner.WithJobLoggerFactory(ctx, r)
+	ctx = common.WithDryrun(ctx, o.dryrun)
+	if err := o.loadValues(); err != nil {
+		return err
+	}
+	c := &o.config
+	if _, exists := c.Secrets["GITHUB_TOKEN"]; !exists {
+		tokenCtx, cancel := common.EarlyCancelContext(ctx)
+		c.Token, _ = gh.GetToken(tokenCtx, c.Workdir)
+		cancel()
+		c.Secrets["GITHUB_TOKEN"] = c.Token
+	}
+	planner, err := model.NewWorkflowPlanner(o.workflows, o.noRecurse, o.strict)
+	if err != nil {
+		return fmt.Errorf("load workflows: %w", err)
+	}
+	var plan *model.Plan
+	if o.job != "" {
+		plan, err = planner.PlanJob(o.job)
+	} else {
+		plan, err = planner.PlanEvent(c.EventName)
+	}
+	if err != nil {
+		return fmt.Errorf("plan workflows: %w", err)
+	}
+	if plan == nil || len(plan.Stages) == 0 {
+		return errors.New("no jobs match the selected workflow, event, and job")
+	}
+	if err := common.JobCancelContext(ctx).Err(); err != nil {
+		return fmt.Errorf("plan cancelled: %w", err)
+	}
+	socket, socketErr := container.GetSocketAndHost(c.ContainerDaemonSocket)
+	if socketErr != nil {
+		logger.Warnf("Docker connection: %v", socketErr)
+	} else {
+		c.ContainerDaemonSocket = socket.Socket
+		previous, existed := os.LookupEnv("DOCKER_HOST")
+		if err := os.Setenv("DOCKER_HOST", socket.Host); err != nil {
+			return fmt.Errorf("configure Docker: %w", err)
+		}
+		defer func() {
+			var restoreErr error
+			if existed {
+				restoreErr = os.Setenv("DOCKER_HOST", previous)
+			} else {
+				restoreErr = os.Unsetenv("DOCKER_HOST")
+			}
+			err = errors.Join(err, restoreErr)
+		}()
+	}
+	engine, err := actrunner.New(c)
+	if err != nil {
+		return fmt.Errorf("configure act: %w", err)
+	}
+	if !o.dryrun {
+		if c.ArtifactServerAddr == "" && c.ArtifactServerPath != "" {
+			ip := common.GetOutboundIP()
+			if ip == nil {
+				return errors.New("cannot determine artifact server address; set --artifact-server-addr")
+			}
+			c.ArtifactServerAddr = ip.String()
+		}
+		stopArtifacts := artifacts.Serve(ctx, c.ArtifactServerPath, c.ArtifactServerAddr, c.ArtifactServerPort)
+		defer stopArtifacts()
+		if !o.noCacheServer && c.Env["ACTIONS_CACHE_URL"] == "" {
+			cache, cacheErr := artifactcache.StartHandler(o.cachePath, o.cacheURL, o.cacheAddr, o.cachePort, logger)
+			if cacheErr != nil {
+				return fmt.Errorf("start cache server: %w", cacheErr)
+			}
+			defer func() { err = errors.Join(err, cache.Close()) }()
+			c.Env["ACTIONS_CACHE_URL"] = cache.ExternalURL() + "/"
+		}
+	}
+	if err := engine.NewPlanExecutor(plan)(ctx); err != nil {
+		return fmt.Errorf("run workflows: %w", err)
+	}
+	return nil
+}
+
+// WithJobLogger gives each job its own logger; act wraps its formatter to mask
+// secrets and ::add-mask:: values before writing JSON into the shared buffer.
+func (r *Runner) WithJobLogger() *logrus.Logger {
+	logger := logrus.New()
+	logger.SetOutput(r)
+	logger.SetFormatter(&logFormatter{})
+	logger.SetLevel(r.level)
+	// An artifact server bind failure must cancel the run, never exit the GUI.
+	logger.ExitFunc = func(int) { r.fail(errors.New("act server failed; see runner output")) }
+	return logger
+}
+
+func (r *Runner) fail(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.done {
+		return
+	}
+	r.exitErr = err
+	r.forceCancel()
+}
+
+// Write accepts complete JSON records from act's loggers, without a pipe or
+// scanner size limit. JSON escapes newlines inside workflow output.
+func (r *Runner) Write(p []byte) (int, error) {
+	lines := strings.Split(strings.TrimSuffix(string(p), "\n"), "\n")
+	r.mu.Lock()
+	if !r.done {
+		r.pending = append(r.pending, lines...)
+	}
+	r.mu.Unlock()
+	r.onFlush()
+	return len(p), nil
+}
+
+// Stop first cancels jobs, allowing post steps and container cleanup, then
+// cancels the entire execution context after the grace period.
 func (r *Runner) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.done || r.cmd == nil || r.cmd.Process == nil {
+	if r.done || r.cancel == nil || r.timer != nil {
 		return
 	}
-	pgid := r.cmd.Process.Pid
-	_ = syscall.Kill(-pgid, syscall.SIGINT)
-	r.timer = time.AfterFunc(4*time.Second, func() {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	})
+	r.cancel()
+	r.timer = time.AfterFunc(4*time.Second, r.forceCancel)
 }
 
-// Drain returns buffered lines (and clears them) plus done/err status.
+// Wait waits for execution and cleanup to finish before the app exits.
+func (r *Runner) Wait() {
+	r.mu.Lock()
+	finished := r.finished
+	r.mu.Unlock()
+	if finished != nil {
+		<-finished
+	}
+}
+
+// Drain returns buffered records and the execution status atomically.
 func (r *Runner) Drain() (lines []string, done bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	lines = r.pending
-	r.pending = nil
+	lines, r.pending = r.pending, nil
 	return lines, r.done, r.exitErr
+}
+
+// act masks messages but leaves workflow-command arguments in JSON fields.
+// Those unused diagnostic fields can contain secrets, including add-mask values.
+type logFormatter struct{ logrus.JSONFormatter }
+
+func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	delete(entry.Data, "arg")
+	delete(entry.Data, "raw")
+	delete(entry.Data, "kvPairs")
+	data, err := f.JSONFormatter.Format(entry)
+	if err != nil {
+		return nil, fmt.Errorf("format act log: %w", err)
+	}
+	return data, nil
 }
