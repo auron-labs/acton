@@ -1,10 +1,10 @@
-// Package app is the actgui application: the window's state, the views that
+// Package app is the Acton application: the window's state, the views that
 // render it, and the act runs it launches.
 package app
 
 import (
-	"actgui/internal/act"
-	"actgui/internal/settings"
+	"acton/internal/act"
+	"acton/internal/settings"
 	"context"
 	"errors"
 	"fmt"
@@ -110,7 +110,7 @@ func Run(dir string, runNow bool) error {
 	}
 	mygo.App.WhenReady(func() {
 		shell := plain.NewShell(plain.ShellOptions{
-			Title:               "act",
+			Title:               "Acton",
 			Width:               1120,
 			Height:              720,
 			MinWidth:            720,

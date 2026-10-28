@@ -1,7 +1,7 @@
 package app
 
 import (
-	"actgui/internal/act"
+	"acton/internal/act"
 	"context"
 	"errors"
 	"fmt"

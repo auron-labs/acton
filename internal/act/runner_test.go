@@ -112,7 +112,7 @@ func TestRunnerDoneWaitsForOutput(t *testing.T) {
 // shortcut: act v0.2.89 has host PTY races/output loss; upgrade when upstream fixes them.
 func TestRunnerWorkflow(t *testing.T) {
 	platforms := []string{"-self-hosted"}
-	if image := os.Getenv("ACTGUI_TEST_IMAGE"); image != "" {
+	if image := os.Getenv("ACTON_TEST_IMAGE"); image != "" {
 		platforms = append(platforms, image)
 	}
 	for _, platform := range platforms {

@@ -1,4 +1,4 @@
-module actgui
+module acton
 
 go 1.27.3
 

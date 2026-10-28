@@ -232,6 +232,37 @@ func TestSaveActrcRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadLegacyActrc(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".actrc"), []byte("--env OLD=removed\n--reuse\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	const legacy = "# Saved by actgui: complete project settings (replaces inherited GUI defaults).\n" +
+		"# actgui-event: workflow_dispatch\n--env MESSAGE=hello world\n--pull=false\n"
+	if err := os.WriteFile(filepath.Join(dir, ".actrc"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := Default(dir)
+	s.LoadActrc()
+	want := []string{"workflow_dispatch", "--env", "MESSAGE=hello world", "--pull=false", "--json=true"}
+	got, err := s.Args()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy settings: got %q, want %q, err=%v", got, want, err)
+	}
+	if err := s.SaveActrc(); err != nil {
+		t.Fatal(err)
+	}
+	s = Default(dir)
+	s.LoadActrc()
+	got, err = s.Args()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated settings: got %q, want %q, err=%v", got, want, err)
+	}
+}
+
 func TestSaveActrcFailurePreservesFile(t *testing.T) {
 	s := Default(t.TempDir())
 	path := filepath.Join(s.Dir, ".actrc")

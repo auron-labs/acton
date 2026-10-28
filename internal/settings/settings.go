@@ -193,14 +193,20 @@ func (s *Settings) LoadActrc() {
 		}
 		// Saved project snapshots replace inherited defaults, including removed values.
 		saved := strings.HasPrefix(string(data), savedActrcHeader)
+		eventPrefix := savedEventPrefix
+		// Read snapshots from before the rename so events and cleared defaults survive.
+		if strings.HasPrefix(string(data), "# Saved by actgui: complete project settings (replaces inherited GUI defaults).\n") {
+			saved = true
+			eventPrefix = "# actgui-event: "
+		}
 		if saved {
 			*s = Settings{Dir: s.Dir}
 		}
 		loaded := false
 		for _, raw := range strings.Split(string(data), "\n") {
 			raw = strings.TrimSpace(raw)
-			if saved && strings.HasPrefix(raw, savedEventPrefix) {
-				s.Event = strings.TrimPrefix(raw, savedEventPrefix)
+			if saved && strings.HasPrefix(raw, eventPrefix) {
+				s.Event = strings.TrimPrefix(raw, eventPrefix)
 				continue
 			}
 			if raw == "" || strings.HasPrefix(raw, "#") {
@@ -258,9 +264,9 @@ func (s *Settings) applyActrcLine(line string) {
 	}
 }
 
-const savedActrcHeader = "# Saved by actgui: complete project settings (replaces inherited GUI defaults).\n"
+const savedActrcHeader = "# Saved by Acton: complete project settings (replaces inherited GUI defaults).\n"
 
-const savedEventPrefix = "# actgui-event: "
+const savedEventPrefix = "# acton-event: "
 
 // SaveActrc atomically saves the current invocation in the project's .actrc.
 // The file is private because the settings can include inline secrets.

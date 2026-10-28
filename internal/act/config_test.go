@@ -1,7 +1,7 @@
 package act
 
 import (
-	"actgui/internal/settings"
+	"acton/internal/settings"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,7 +100,7 @@ func TestOptionsInvalid(t *testing.T) {
 }
 
 func TestOptionsFileErrors(t *testing.T) {
-	for _, args := range [][]string{{"--secret-file", "missing"}, {"-s", "ACTGUI_UNSET_SECRET"}} {
+	for _, args := range [][]string{{"--secret-file", "missing"}, {"-s", "ACTON_UNSET_SECRET"}} {
 		o, err := parseOptions(t.TempDir(), args)
 		if err != nil {
 			t.Fatal(err)

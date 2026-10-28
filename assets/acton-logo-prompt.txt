@@ -1,0 +1,11 @@
+Generated using the built-in image_gen tool.
+
+Use case: logo-brand
+Asset type: primary logo symbol for Acton, a native desktop developer tool for running GitHub Actions workflows locally.
+Primary request: create a polished, memorable Acton logo that feels at home in a carefully designed macOS developer app.
+Scene/backdrop: genuinely transparent background.
+Subject: one distinctive geometric capital A monogram, with a subtle right-pointing play shape formed by its negative space, conveying action and running workflows. Resolve the A and play gesture into one cohesive silhouette rather than separate symbols.
+Style/medium: precise, minimal, vector-like graphic design; bold clean geometry, subtly softened corners, excellent optical balance.
+Color palette: use the app's established royal blue accent #2F6FED, with a restrained lighter blue plane only if needed to clarify the form.
+Composition/framing: single centered standalone mark on a square canvas, generous transparent padding, strong silhouette legible at 32px.
+Constraints: symbol only; no wordmark, no letters other than the A monogram, no mockup, no surrounding app tile, no border, no shadow, no photographic texture, no glow, no watermark. Deliver a finished logo asset rather than a presentation sheet.

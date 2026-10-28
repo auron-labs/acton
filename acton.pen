@@ -29,7 +29,7 @@
               "id": "to8oO",
               "name": "Eyebrow",
               "fill": "$--primary-text",
-              "content": "ACTGUI DESIGN SYSTEM",
+              "content": "ACTON DESIGN SYSTEM",
               "fontFamily": "$--font-primary",
               "fontSize": 12,
               "fontWeight": "600",
@@ -2585,7 +2585,7 @@
               "id": "PJ8Ma",
               "name": "Eyebrow",
               "fill": "$--primary-text",
-              "content": "ACTGUI DESIGN SYSTEM",
+              "content": "ACTON DESIGN SYSTEM",
               "fontFamily": "$--font-primary",
               "fontSize": 12,
               "fontWeight": "600",
@@ -4360,7 +4360,7 @@
       "id": "eEMA6",
       "x": 0,
       "y": 2644,
-      "name": "Act GUI — Choose a project",
+      "name": "Acton — Choose a project",
       "theme": {
         "mode": "dark"
       },
@@ -4897,7 +4897,7 @@
       "id": "iOWMk",
       "x": 2497,
       "y": 2644,
-      "name": "Act GUI — Configured project",
+      "name": "Acton — Configured project",
       "theme": {
         "mode": "dark"
       },
@@ -5481,7 +5481,7 @@
       "id": "T4NhU",
       "x": 4994,
       "y": 2644,
-      "name": "Act GUI — Ready to run",
+      "name": "Acton — Ready to run",
       "theme": {
         "mode": "dark"
       },
@@ -5507,7 +5507,7 @@
       "id": "qrxJI",
       "x": 0,
       "y": 4055,
-      "name": "Act GUI — Select a project",
+      "name": "Acton — Select a project",
       "theme": {
         "mode": "dark"
       },
@@ -5723,7 +5723,7 @@
       "id": "XpQ0A",
       "x": 2497,
       "y": 4055,
-      "name": "Act GUI — No GitHub Actions",
+      "name": "Acton — No GitHub Actions",
       "theme": {
         "mode": "dark"
       },
@@ -5809,13 +5809,13 @@
                   "id": "DmG5q",
                   "type": "ref",
                   "ref": "MYcg2",
-                  "name": "Selected project — actgui",
+                  "name": "Selected project — acton",
                   "descendants": {
                     "fhFeQ": {
                       "icon": "folder-open"
                     },
                     "XyosS": {
-                      "content": "actgui"
+                      "content": "Acton"
                     }
                   }
                 },
@@ -5964,7 +5964,7 @@
       "id": "vCfm5",
       "x": 4994,
       "y": 4055,
-      "name": "Act GUI — act not detected",
+      "name": "Acton — act not detected",
       "theme": {
         "mode": "dark"
       },
@@ -6145,7 +6145,7 @@
                           "fill": "$--muted-foreground",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "Act GUI couldn't find act on your PATH.\nInstall act, or make it available on your PATH, then check again.",
+                          "content": "Acton couldn't find act on your PATH.\nInstall act, or make it available on your PATH, then check again.",
                           "textAlign": "center",
                           "fontFamily": "$--font-primary",
                           "fontSize": 14,
@@ -6205,7 +6205,7 @@
       "id": "lBl0p",
       "x": 7491,
       "y": 4055,
-      "name": "Act GUI — act update required",
+      "name": "Acton — act update required",
       "theme": {
         "mode": "dark"
       },
@@ -6386,7 +6386,7 @@
                           "fill": "$--muted-foreground",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "Your installed version of act is too old for Act GUI.\nUpdate to a supported version, then check again.",
+                          "content": "Your installed version of act is too old for Acton.\nUpdate to a supported version, then check again.",
                           "textAlign": "center",
                           "fontFamily": "$--font-primary",
                           "fontSize": 14,
@@ -6446,7 +6446,7 @@
       "id": "UBAxX",
       "x": 7491,
       "y": 2644,
-      "name": "Act GUI — Timeline",
+      "name": "Acton — Timeline",
       "context": "Editable copy of the supplied current timeline capture, including its existing scroll position and expanded Check formatting failure.",
       "theme": {
         "mode": "dark"

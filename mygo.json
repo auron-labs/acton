@@ -1,7 +1,8 @@
 {
-  "name": "actgui",
-  "main": "./cmd/actgui",
-  "identifier": "dev.actgui.app",
+  "name": "acton",
+  "main": "./cmd/acton",
+  "identifier": "dev.acton.app",
+  "icon": "assets/acton-logo.png",
   "version": "0.1.0",
   "out": "build"
 }

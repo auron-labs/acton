@@ -1,11 +1,11 @@
-// actgui wraps nektos/act in a desktop window: project picker and settings
+// Acton wraps nektos/act in a desktop window: project picker and settings
 // on the left, GitHub-Actions-style job output on the right.
 //
-// Usage: actgui [--run] [project-dir]
+// Usage: acton [--run] [project-dir]
 package main
 
 import (
-	"actgui/internal/app"
+	"acton/internal/app"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,7 +20,7 @@ func main() {
 			runNow = true
 		case strings.HasPrefix(arg, "-"):
 			//nolint:gosec // G706: %q escapes control characters in the flag.
-			log.Printf("actgui: ignoring unknown flag %q", arg)
+			log.Printf("acton: ignoring unknown flag %q", arg)
 		default:
 			if abs, err := filepath.Abs(arg); err == nil {
 				dir = abs

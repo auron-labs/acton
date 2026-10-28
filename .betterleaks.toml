@@ -5,7 +5,7 @@ useDefault = true
 [[allowlists]]
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['^actgui\.pen$']
+paths = ['^acton\.pen$']
 regexTarget = "line"
 regexes = ['''^\s*"fileToken": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"\s*$''']
 
