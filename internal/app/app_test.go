@@ -29,12 +29,12 @@ func TestViewSmoke(t *testing.T) {
 	}
 
 	feed(&a.run,
-		`[CI/build] ⭐  Run Set up job`,
-		`[CI/build]   ✅  Success - Set up job`,
-		`[CI/build] ⭐  Run Main go test`,
-		`[CI/build]   | ok`,
-		`[CI/build]   ✅  Success - Main go test [1s]`,
-		`[CI/build] 🏁  Job succeeded`,
+		`{"job":"CI/build","step":"Set up job","stepid":["--setup-job"],"msg":"⭐ Run Set up job"}`,
+		`{"job":"CI/build","step":"Set up job","stepid":["--setup-job"],"stepResult":"success","msg":"✅ Success - Set up job"}`,
+		`{"job":"CI/build","step":"go test","stepID":["test"],"stage":"Main","msg":"⭐ Run Main go test"}`,
+		`{"job":"CI/build","step":"go test","stepID":["test"],"stage":"Main","raw_output":true,"msg":"ok"}`,
+		`{"job":"CI/build","step":"go test","stepID":["test"],"stage":"Main","stepResult":"success","executionTime":1000000000,"msg":"✅ Success - Main go test"}`,
+		`{"job":"CI/build","jobResult":"success","msg":"🏁 Job succeeded"}`,
 		`act: some runner warning`,
 	)
 	tt.Frame()
@@ -69,12 +69,12 @@ func TestViewSmoke(t *testing.T) {
 	}
 	tt.Frame()
 	raw := a.rawLogFor(a.run.Jobs[0]).buf.String()
-	for _, want := range []string{"⭐  Run Set up job", "✅  Success - Main go test", "🏁  Job succeeded"} {
+	for _, want := range []string{`"msg":"⭐ Run Set up job"`, `"stepResult":"success"`, `"jobResult":"success"`} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("raw log missing %q:\n%s", want, raw)
 		}
 	}
-	feed(&a.run, `[CI/build] ⭐  Run Post cleanup`)
+	feed(&a.run, `{"job":"CI/build","step":"cleanup","stepID":["cleanup"],"stage":"Post","msg":"⭐ Run Post cleanup"}`)
 	tt.Frame()
 	if !strings.Contains(a.rawLogFor(a.run.Jobs[0]).buf.String(), "Post cleanup") {
 		t.Fatalf("raw buffer did not append new lines")

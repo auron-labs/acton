@@ -3,6 +3,7 @@ package act
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,8 +32,8 @@ type Runner struct {
 
 // Start launches act in dir with args. onFlush is called from a worker each
 // time output is buffered (at most ~15/s); it must schedule a UI update.
-// onDone is called from a worker when the process exits; it must also
-// schedule a UI update.
+// onDone is called from a worker after the process exits and all output has
+// been buffered; it must also schedule a UI update.
 func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	//nolint:gosec // G204: launching act with the configured args is the app.
@@ -63,6 +64,7 @@ func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error 
 	r.cmd = cmd
 
 	// Read lines into pending; close the write end when the process exits.
+	readDone := make(chan error, 1)
 	go func() {
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
@@ -73,12 +75,14 @@ func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error 
 			onFlush()
 		}
 		_ = pr.Close()
+		readDone <- sc.Err()
 	}()
 
 	go func() {
 		err := cmd.Wait()
 		_ = pw.Close()
 		cancel()
+		err = errors.Join(err, <-readDone)
 		r.mu.Lock()
 		r.done = true
 		r.exitErr = err

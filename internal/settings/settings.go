@@ -282,7 +282,7 @@ func splitWords(s string) ([]string, error) {
 	return words, nil
 }
 
-// Args builds the act command line.
+// Args builds the act command line, including the GUI's required JSON output.
 func (s *Settings) Args() ([]string, error) {
 	args := []string{}
 	event := strings.TrimSpace(s.Event)
@@ -361,6 +361,8 @@ func (s *Settings) Args() ([]string, error) {
 		}
 		args = append(args, words...)
 	}
+	// Override user and .actrc flags so they cannot disable the GUI protocol.
+	args = append(args, "--json=true")
 	return args, nil
 }
 

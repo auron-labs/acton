@@ -1,6 +1,11 @@
 package act
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
 
 func feed(r *Run, lines ...string) {
 	for _, l := range lines {
@@ -11,95 +16,172 @@ func feed(r *Run, lines ...string) {
 func TestFeedParsesJobsAndSteps(t *testing.T) {
 	var r Run
 	feed(&r,
-		`time="x" level=info msg="Using docker host"`,
-		`[CI/build] ⭐  Run Set up job`,
-		`[CI/build]   🚀  Start image=catthehacker/ubuntu:act-latest`,
-		`[CI/build]   🐳  docker pull image=catthehacker/ubuntu:act-latest`,
-		`[CI/build]   ✅  Success - Set up job`,
-		`[CI/build] ⭐  Run Main actions/checkout@v4`,
-		`[CI/build]   | Checking out the ref`,
-		`[CI/build]   ✅  Success - Main actions/checkout@v4 [1.5s]`,
-		`[CI/build] ⭐  Run Main go test`,
-		`[CI/build]   | ok  	pkg	0.3s`,
-		`[CI/build]   ❌  Failure - Main go test [2.0s]`,
-		`[CI/build] 🏁  Job failed`,
-		`[CI/lint ] ⭐  Run Set up job`,
-		`[CI/lint ]   ✅  Success - Set up job`,
-		`[CI/lint ] 🏁  Job succeeded`,
+		`{"level":"info","msg":"Using docker host"}`,
+		`{"job":"CI/build","jobID":"build","step":"Set up job","stepid":["--setup-job"],"msg":"⭐ Run Set up job"}`,
+		`{"job":"CI/build","jobID":"build","step":"Set up job","stepid":["--setup-job"],"msg":"🚀 Start image=catthehacker/ubuntu:act-latest"}`,
+		`{"job":"CI/build","jobID":"build","step":"Set up job","stepid":["--setup-job"],"msg":"🐳 docker pull image=catthehacker/ubuntu:act-latest"}`,
+		`{"job":"CI/build","jobID":"build","step":"Set up job","stepid":["--setup-job"],"stepResult":"success","msg":"✅ Success - Set up job"}`,
+		`{"job":"CI/build","jobID":"build","step":"actions/checkout@v4","stepID":["checkout"],"stage":"Main","msg":"⭐ Run Main actions/checkout@v4"}`,
+		`{"job":"CI/build","jobID":"build","step":"actions/checkout@v4","stepID":["checkout"],"stage":"Main","raw_output":true,"msg":"Checking out the ref"}`,
+		`{"job":"CI/build","jobID":"build","step":"actions/checkout@v4","stepID":["checkout"],"stage":"Main","stepResult":"success","executionTime":1500000000,"msg":"result text need not be parsed"}`,
+		`{"job":"CI/build","jobID":"build","step":"go test","stepID":["test"],"stage":"Main","msg":"⭐ Run Main go test"}`,
+		`{"job":"CI/build","jobID":"build","step":"go test","stepID":["test"],"stage":"Main","raw_output":true,"msg":"ok\t pkg\t0.3s"}`,
+		`{"job":"CI/build","jobID":"build","step":"go test","stepID":["test"],"stage":"Main","stepResult":"failure","executionTime":2000000000,"msg":"failure"}`,
+		`{"job":"CI/build","jobID":"build","jobResult":"failure","msg":"job result"}`,
+		`{"job":"CI/lint","jobID":"lint","step":"Set up job","stepid":["--setup-job"],"stepResult":"success","msg":"setup done"}`,
+		`{"job":"CI/lint","jobID":"lint","jobResult":"success","msg":"done"}`,
 	)
-
-	if len(r.Jobs) != 2 {
-		t.Fatalf("jobs=%d, want 2", len(r.Jobs))
+	if len(r.Jobs) != 2 || len(r.Runner) != 1 || r.Runner[0] != "Using docker host" {
+		t.Fatalf("jobs=%d runner=%q", len(r.Jobs), r.Runner)
 	}
-	if len(r.Runner) != 1 {
-		t.Fatalf("runner lines=%d, want 1", len(r.Runner))
-	}
-
 	build := r.Jobs[0]
-	if build.Name != "build" || build.Status != StatusFailure {
-		t.Fatalf("build: name=%q status=%v", build.Name, build.Status)
-	}
-	if len(build.Steps) != 3 {
-		t.Fatalf("build steps=%d, want 3", len(build.Steps))
+	if build.Name != "build" || build.Status != StatusFailure || len(build.Steps) != 3 {
+		t.Fatalf("build: %+v", build)
 	}
 	setup, checkout, test := build.Steps[0], build.Steps[1], build.Steps[2]
-	if setup.Name != "Set up job" || setup.Status != StatusSuccess {
-		t.Fatalf("setup: name=%q status=%v", setup.Name, setup.Status)
+	if setup.Name != "Set up job" || setup.Status != StatusSuccess || len(setup.Lines) != 2 {
+		t.Fatalf("setup: %+v", setup)
 	}
-	if len(setup.Lines) != 2 {
-		t.Fatalf("setup lines=%d, want 2", len(setup.Lines))
-	}
-	if checkout.Stage != "Main" || checkout.Name != "actions/checkout@v4" || checkout.Dur != "1.5s" {
+	if checkout.Stage != "Main" || checkout.Name != "actions/checkout@v4" || checkout.Dur != "1.5s" || checkout.Open {
 		t.Fatalf("checkout: %+v", checkout)
 	}
-	if test.Status != StatusFailure || len(test.Lines) != 1 {
+	if test.Status != StatusFailure || len(test.Lines) != 1 || !test.Open || test.Dur != "2s" {
 		t.Fatalf("test: %+v", test)
 	}
 	if lint := r.Jobs[1]; lint.Status != StatusSuccess || lint.Name != "lint" {
-		t.Fatalf("lint: name=%q status=%v", lint.Name, lint.Status)
+		t.Fatalf("lint: %+v", lint)
+	}
+	if !strings.Contains(build.Raw[0], `"stepid"`) {
+		t.Fatalf("raw record not preserved: %q", build.Raw[0])
 	}
 }
 
-func TestFeedDryRunAndPadding(t *testing.T) {
+func TestFeedRawOutputIsNeverLifecycle(t *testing.T) {
+	var r Run
+	messages := []string{"⭐ Run Main fake", "✅ Success - fake", "❌ Failure - fake", "🏁 Job failed", "⏭ skipped", "[other/job] hi", "", "  indented\nsecond line", "{\"jobResult\":\"failure\"}"}
+	for _, msg := range messages {
+		b, err := json.Marshal(map[string]any{
+			"job": "CI/build", "step": "script", "stepID": []string{"script"}, "stage": "Main", "raw_output": true,
+			"msg": msg, "stepResult": "failure", "jobResult": "failure",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Feed(string(b))
+	}
+	j := r.Jobs[0]
+	if j.Status != StatusRunning || len(j.Steps) != 1 || j.Steps[0].Status != StatusRunning {
+		t.Fatalf("user output changed lifecycle: %+v", j)
+	}
+	if got := j.Steps[0].Lines; strings.Join(got, "\x00") != strings.Join(messages, "\x00") {
+		t.Fatalf("lines=%q, want %q", got, messages)
+	}
+}
+
+func TestFeedStepIdentityAndStages(t *testing.T) {
 	var r Run
 	feed(&r,
-		`*DRYRUN* [CI/lint ] ⭐  Run Set up job`,
-		`*DRYRUN* [CI/lint ]   ✅  Success - Set up job`,
+		`{"job":"CI/build","step":"same name","stepID":["a"],"stage":"Main","msg":"⭐ Run Main same name"}`,
+		`{"job":"CI/build","step":"same name","stepID":["a","child"],"stage":"Main","msg":"⭐ Run Main child"}`,
+		`{"job":"CI/build","step":"same name","stepID":["a","child"],"stage":"Main","stepResult":"success","msg":"child done"}`,
+		`{"job":"CI/build","step":"same name","stepID":["a"],"stage":"Main","raw_output":true,"msg":"parent output"}`,
+		`{"job":"CI/build","step":"same name","stepID":["a"],"stage":"Main","stepResult":"success","msg":"parent done"}`,
+		`{"job":"CI/build","step":"same name","stepID":["b"],"stage":"Main","stepResult":"skipped","msg":"skip without parsing name"}`,
+		`{"job":"CI/build","step":"same name","stepID":["a"],"stage":"Post","msg":"⭐ Run Post same name"}`,
+		`{"job":"CI/build","step":"same name","stepID":["a"],"stage":"Post","stepResult":"success","msg":"post done"}`,
 	)
-	if len(r.Jobs) != 1 || r.Jobs[0].Key != "CI/lint" {
+	j := r.Jobs[0]
+	if len(j.Steps) != 4 {
+		t.Fatalf("steps=%+v", j.Steps)
+	}
+	if s := j.Steps[0]; len(s.Lines) != 1 || s.Lines[0] != "parent output" || s.Status != StatusSuccess {
+		t.Fatalf("parent: %+v", s)
+	}
+	if j.Steps[1].Status != StatusSuccess || j.Steps[2].Status != StatusSkipped || j.Steps[3].Name != "Post same name" {
+		t.Fatalf("incorrect composite/stage results: %+v", j.Steps)
+	}
+}
+
+func TestFeedJobIdentity(t *testing.T) {
+	var r Run
+	feed(&r,
+		`{"job":"CI/build","jobID":"build","matrix":{"os":"linux","go":"1.27"},"msg":"first"}`,
+		`{"job":"CI/build","jobID":"build","matrix":{"go":"1.27","os":"linux"},"msg":"same variant"}`,
+		`{"job":"CI/build","jobID":"build","matrix":{"os":"macos","go":"1.27"},"msg":"other variant"}`,
+		`{"job":"Release/build","jobID":"build","matrix":{"os":"linux","go":"1.27"},"msg":"other workflow"}`,
+		`{"job":"CI/build","jobID":"other","matrix":{"os":"linux","go":"1.27"},"msg":"other ID"}`,
+	)
+	if len(r.Jobs) != 4 || len(r.Jobs[0].Items) != 2 {
 		t.Fatalf("jobs=%+v", r.Jobs)
 	}
 }
 
-func TestFeedSkippedDebugStep(t *testing.T) {
+func TestFeedDiagnostics(t *testing.T) {
 	var r Run
 	feed(&r,
-		`[CI/build] [DEBUG] Skipping step 'deploy' due to 'if'`,
+		"\x1b[0mplain text\x1b[0m",
+		`[CI/build] ⭐ Run Main not a structured event`,
+		`{"msg":`,
+		`{"something":"else"}`,
+		`null`,
+		`{"msg":123}`,
+		`{"level":"warning","msg":"\u001b[31mwarning\u001b[0m"}`,
+		"  ",
 	)
-	j := r.Jobs[0]
-	if len(j.Steps) != 1 || j.Steps[0].Status != StatusSkipped || j.Steps[0].Name != "deploy" {
-		t.Fatalf("steps=%+v", j.Steps)
+	if len(r.Jobs) != 0 || len(r.Runner) != 7 || r.Runner[0] != "plain text" || r.Runner[6] != "warning" {
+		t.Fatalf("jobs=%+v runner=%q", r.Jobs, r.Runner)
 	}
 }
 
-func TestFeedAnsiAndRunnerLines(t *testing.T) {
+func TestFeedTimestampsAndFinish(t *testing.T) {
 	var r Run
-	r.Feed("\x1b[0mplain text\x1b[0m")
-	if len(r.Runner) != 1 || r.Runner[0] != "plain text" {
-		t.Fatalf("runner=%q", r.Runner)
+	feed(&r,
+		`{"job":"CI/build","step":"test","stepID":["test"],"stage":"Main","time":"2026-10-28T12:00:00Z","msg":"⭐ Run Main test"}`,
+		`{"job":"CI/build","step":"test","stepID":["test"],"stage":"Main","time":"2026-10-28T12:00:02Z","stepResult":"failure","executionTime":1234567890,"msg":"done"}`,
+		`{"job":"CI/build","jobResult":"success","time":"2026-10-28T12:00:03Z","msg":"continued on error"}`,
+		`{"job":"CI/lint","step":"lint","stepID":["lint"],"stage":"Main","msg":"⭐ Run Main lint"}`,
+	)
+	r.Finish(StatusCancelled)
+	j := r.Jobs[0]
+	if j.Duration() != "3s" || j.Status != StatusSuccess || j.Steps[0].Dur != "1.235s" || j.Steps[0].Status != StatusFailure {
+		t.Fatalf("finished job: %+v step: %+v", j, j.Steps[0])
+	}
+	if s := j.Steps[0]; !s.Started.Equal(time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)) || s.Ended.Sub(s.Started) != 2*time.Second {
+		t.Fatalf("timestamps: %+v", s)
+	}
+	if j := r.Jobs[1]; j.Status != StatusCancelled || j.Steps[0].Status != StatusCancelled || j.Steps[0].Ended.IsZero() {
+		t.Fatalf("unfinished job: %+v", j)
+	}
+	r.Reset()
+	if len(r.Jobs) != 0 || len(r.Runner) != 0 || r.byKey != nil {
+		t.Fatalf("reset: %+v", r)
 	}
 }
 
-func TestOrphanLinesKeepOrder(t *testing.T) {
+func TestFeedOrphanLinesAndDryRun(t *testing.T) {
 	var r Run
 	feed(&r,
-		`[CI/build] ⭐  Run Set up job`,
-		`[CI/build]   ✅  Success - Set up job`,
-		`[CI/build] unable to get git ref: reference not found`,
-		`[CI/build] ⭐  Run Main step`,
+		`{"job":"CI/build","dryrun":true,"step":"Set up job","stepid":["--setup-job"],"msg":"⭐ Run Set up job"}`,
+		`{"job":"CI/build","dryrun":true,"step":"Set up job","stepid":["--setup-job"],"stepResult":"success","msg":"done"}`,
+		`{"job":"CI/build","dryrun":true,"msg":"unable to get git ref: reference not found"}`,
+		`{"job":"CI/build","dryrun":true,"step":"test","stepID":["test"],"stage":"Main","msg":"⭐ Run Main test"}`,
 	)
 	j := r.Jobs[0]
-	if len(j.Items) != 3 || j.Items[1].Line == "" {
+	if len(j.Items) != 3 || j.Items[1].Line == "" || len(j.Steps) != 2 {
 		t.Fatalf("items=%+v", j.Items)
+	}
+}
+
+func TestFeedJobSkipped(t *testing.T) {
+	for _, line := range []string{
+		`{"job":"CI/build","jobResult":"skipped","msg":"condition false"}`,
+		`{"job":"CI/build","msg":"🚧  Skipping unsupported platform -- Try running with -P"}`,
+	} {
+		var r Run
+		r.Feed(line)
+		r.Finish(StatusSuccess)
+		if j := r.Jobs[0]; j.Status != StatusSkipped || j.Ended.IsZero() {
+			t.Fatalf("skipped job: %+v", j)
+		}
 	}
 }
