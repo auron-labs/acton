@@ -187,3 +187,67 @@ func TestActrcExplicitFalseAndEmpty(t *testing.T) {
 		t.Fatalf("explicit .actrc values lost: %q", args)
 	}
 }
+
+func TestSaveActrcRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".actrc"), []byte("--env OLD=removed\n--reuse\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := Default(t.TempDir())
+	s.Event = "workflow_dispatch"
+	s.Workflow = "workflow with spaces.yml"
+	s.Platforms = nil
+	s.Secrets = []string{"TOKEN=quote's $literal value"}
+	s.Env = []string{"MESSAGE=hello world"}
+	s.ExtraArgs = `--container-options "--cpus 2" --matrix os:linux`
+	s.Pull = false
+	s.applyActrcLine(`--secret-file ""`)
+	if err := s.SaveActrc(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(s.Dir, ".actrc"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("file permissions: %v, %v", info, err)
+	}
+	loaded := Default(s.Dir)
+	loaded.LoadActrc()
+	want, err := s.Args()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loaded.Args()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("round trip: got %q, want %q, err=%v", got, want, err)
+	}
+	if err := loaded.SaveActrc(); err != nil {
+		t.Fatal(err)
+	}
+	loadedAgain := Default(s.Dir)
+	loadedAgain.LoadActrc()
+	again, err := loadedAgain.Args()
+	if err != nil || !reflect.DeepEqual(again, want) {
+		t.Fatalf("repeated save changed arguments: %q, err=%v", again, err)
+	}
+}
+
+func TestSaveActrcFailurePreservesFile(t *testing.T) {
+	s := Default(t.TempDir())
+	path := filepath.Join(s.Dir, ".actrc")
+	const original = "--env KEEP=value\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, extra := range []string{`--env "unclosed`, "--env 'MULTILINE=first\nsecond'"} {
+		s.ExtraArgs = extra
+		if err := s.SaveActrc(); err == nil {
+			t.Fatal("accepted invalid settings")
+		}
+		//nolint:gosec // G304: path is the test's temporary .actrc.
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != original {
+			t.Fatal("failed save modified existing settings")
+		}
+	}
+}

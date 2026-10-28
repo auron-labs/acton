@@ -157,3 +157,27 @@ func TestWorkflowTriggerForms(t *testing.T) {
 		})
 	}
 }
+
+func TestSaveSettingsButton(t *testing.T) {
+	a := newApp()
+	a.settings.Dir = t.TempDir()
+	a.settings.Event = "release"
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(designTheme(c))
+		a.configView(c)
+	}, 320, 720)
+	if err := tt.Click("Save settings to .actrc"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(a.settings.Dir, ".actrc"))
+	if err != nil || !strings.Contains(string(data), "release") || a.fileErr != "" {
+		t.Fatalf("save: %q, %v, %s", data, err, a.fileErr)
+	}
+	a.settings.ExtraArgs = `--env "unclosed`
+	if err := tt.Click("Save settings to .actrc"); err != nil {
+		t.Fatal(err)
+	}
+	if a.fileErr == "" {
+		t.Fatal("save failure was not reported")
+	}
+}

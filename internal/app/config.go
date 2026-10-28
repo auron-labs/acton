@@ -284,6 +284,12 @@ func (a *App) commandPreview(c *ui.Context) {
 	ui.Column(c).FillWidth().Shrink(0).Padding(t.Space(4)).Gap(t.Space(3)).BorderWidth(1, 0, 0, 0).BorderColor(sectionBorder(c)).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 			components.Text(c, "Command preview").FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted).Grow(1)
+			if components.Button(c, "Save", components.ButtonSecondary).Label("Save settings to .actrc").Disabled(a.settings.Dir == "").Clicked() {
+				a.fileErr = ""
+				if err := a.settings.SaveActrc(); err != nil {
+					a.fileErr = err.Error()
+				}
+			}
 			copyButton := components.Button(c, "", components.ButtonGhost).Label("Copy command").Size(t.Space(6), t.Space(5)).Padding(0)
 			copyButton.Children(func() { components.Icon(c, lucide.Copy()).Size(t.Space(3.25), t.Space(3.25)).TextColor(t.TextMuted) })
 			if copyButton.Clicked() {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -167,7 +168,13 @@ func flagTakesValue(name string) bool {
 		"-W", "--workflows", "--matrix", "--userns", "--container-options",
 		"--github-instance", "--artifact-server-path", "--cache-server-path",
 		"--remote-name", "--action-offline-path", "--network", "--workdir",
-		"-C", "--directory", "--actor", "--github-token":
+		"-C", "--directory", "--actor", "-a", "--github-token", "--input-file",
+		"--defaultbranch", "--container-daemon-socket", "--container-cap-add",
+		"--container-cap-drop", "--replace-ghe-action-with-github-com",
+		"--replace-ghe-action-token-with-github-com", "--concurrent-jobs",
+		"--action-cache-path", "--local-repository", "--cache-server-addr",
+		"--cache-server-external-url", "--cache-server-port", "--artifact-server-addr",
+		"--artifact-server-port":
 		return true
 	}
 	return false
@@ -184,14 +191,38 @@ func (s *Settings) LoadActrc() {
 		if err != nil {
 			continue
 		}
+		// Saved project snapshots replace inherited defaults, including removed values.
+		saved := strings.HasPrefix(string(data), savedActrcHeader)
+		if saved {
+			*s = Settings{Dir: s.Dir}
+		}
 		loaded := false
 		for _, raw := range strings.Split(string(data), "\n") {
 			raw = strings.TrimSpace(raw)
+			if saved && strings.HasPrefix(raw, savedEventPrefix) {
+				s.Event = strings.TrimPrefix(raw, savedEventPrefix)
+				continue
+			}
 			if raw == "" || strings.HasPrefix(raw, "#") {
 				continue
 			}
 			loaded = true
-			s.applyActrcLine(raw)
+			if saved {
+				// act's .actrc uses the rest of each flag line as a literal value.
+				name, value, hasValue := strings.Cut(raw, " ")
+				if !hasValue {
+					name, value, hasValue = strings.Cut(raw, "=")
+				}
+				if !s.applyActrcWord(name, value, hasValue) {
+					if strings.HasPrefix(raw, name+" ") {
+						s.appendExtra(name, value)
+					} else {
+						s.appendExtra(raw)
+					}
+				}
+			} else {
+				s.applyActrcLine(raw)
+			}
 		}
 		if loaded {
 			s.ActrcFiles = append(s.ActrcFiles, path)
@@ -225,6 +256,57 @@ func (s *Settings) applyActrcLine(line string) {
 			s.appendExtra(w)
 		}
 	}
+}
+
+const savedActrcHeader = "# Saved by actgui: complete project settings (replaces inherited GUI defaults).\n"
+
+const savedEventPrefix = "# actgui-event: "
+
+// SaveActrc atomically saves the current invocation in the project's .actrc.
+// The file is private because the settings can include inline secrets.
+func (s *Settings) SaveActrc() error {
+	if s.Dir == "" {
+		return errors.New("choose a project before saving settings")
+	}
+	args, err := s.Args()
+	if err != nil {
+		return err
+	}
+	for _, arg := range args {
+		if strings.ContainsAny(arg, "\r\n") {
+			return errors.New(".actrc values cannot contain newlines; use a values file instead")
+		}
+	}
+	f, err := os.CreateTemp(s.Dir, ".actrc-*")
+	if err != nil {
+		return fmt.Errorf("create .actrc: %w", err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	var contents strings.Builder
+	contents.WriteString(savedActrcHeader + savedEventPrefix + args[0] + "\n")
+	// The CLI accepts one flag per line and treats its value literally, without shell quotes.
+	for i := 1; i < len(args)-1; i++ {
+		arg := args[i]
+		if flagTakesValue(arg) && i+1 < len(args)-1 {
+			i++
+			arg += " " + args[i]
+		} else if strings.ContainsAny(arg, " \t") {
+			arg = strings.Replace(arg, "=", " ", 1)
+		}
+		contents.WriteString(arg + "\n")
+	}
+	_, writeErr := f.WriteString(contents.String())
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		return fmt.Errorf("write .actrc: %w", err)
+	}
+	path := filepath.Join(s.Dir, ".actrc")
+	if err := os.Rename(f.Name(), path); err != nil {
+		return fmt.Errorf("save .actrc: %w", err)
+	}
+	if !slices.Contains(s.ActrcFiles, path) {
+		s.ActrcFiles = append(s.ActrcFiles, path)
+	}
+	return nil
 }
 
 func (s *Settings) appendExtra(words ...string) {
