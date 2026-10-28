@@ -115,6 +115,7 @@ type logEvent struct {
 	StepID        []string       `json:"stepID"`
 	Stage         string         `json:"stage"`
 	RawOutput     bool           `json:"raw_output"`
+	Command       string         `json:"command"`
 	StepResult    string         `json:"stepResult"`
 	JobResult     string         `json:"jobResult"`
 	ExecutionTime *time.Duration `json:"executionTime"`
@@ -233,6 +234,9 @@ func (r *Run) Feed(line string) {
 		return
 	}
 	msg := ansiRe.ReplaceAllString(*e.Message, "")
+	if e.Command != "ignored" {
+		msg = annotationMessage(msg)
+	}
 	if e.Job == "" && e.JobID == "" {
 		r.Runner = append(r.Runner, msg)
 		return
@@ -270,6 +274,42 @@ func (r *Run) Feed(line string) {
 		j.Status, j.Ended = StatusSkipped, at
 	}
 	r.addMessage(j, e, at, msg, false)
+}
+
+var (
+	annotationRe       = regexp.MustCompile(`(?is)^\s*(?:[❗🚧💬]\s*)?::(error|warning|notice)(?: ([^\r\n]*?))?::(.*)$`)
+	annotationData     = strings.NewReplacer("%0D", "\r", "%0A", "\n", "%25", "%")
+	annotationProperty = strings.NewReplacer("%0D", "\r", "%0A", "\n", "%3A", ":", "%2C", ",", "%25", "%")
+)
+
+// Parse only the masked message; act's raw annotation fields can contain secrets.
+func annotationMessage(msg string) string {
+	m := annotationRe.FindStringSubmatch(msg)
+	if m == nil {
+		return msg
+	}
+	properties := make(map[string]string)
+	for _, pair := range strings.Split(m[2], ",") {
+		key, value, ok := strings.Cut(pair, "=")
+		if ok {
+			properties[strings.ToLower(key)] = annotationProperty.Replace(value)
+		}
+	}
+	location := properties["file"]
+	if line := properties["line"]; line != "" {
+		location += ":" + line
+		if col := properties["col"]; col != "" {
+			location += ":" + col
+		}
+	}
+	parts := []string{strings.ToUpper(m[1][:1]) + strings.ToLower(m[1][1:])}
+	if location != "" {
+		parts = append(parts, location)
+	}
+	if title := properties["title"]; title != "" {
+		parts = append(parts, title)
+	}
+	return strings.Join(append(parts, annotationData.Replace(m[3])), ": ")
 }
 
 func (r *Run) addMessage(j *Job, e logEvent, at time.Time, msg string, raw bool) {

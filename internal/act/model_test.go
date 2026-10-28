@@ -185,3 +185,33 @@ func TestFeedJobSkipped(t *testing.T) {
 		}
 	}
 }
+
+func TestGitHubAnnotations(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"::error::failed", "Error: failed"},
+		{"  ❗  ::error file=src/main.go,line=12,col=4,title=Compile%2C fail::bad%0Anext%25line", "Error: src/main.go:12:4: Compile, fail: bad\nnext%line"},
+		{"  🚧  ::warning file=a%2Cb.go,line=3::literal%250A", "Warning: a,b.go:3: literal%0A"},
+		{"::notice title=Info::ready", "Notice: Info: ready"},
+		{"::error file=x", "::error file=x"},
+		{"echo ::error::example", "echo ::error::example"},
+		{"::add-mask::private", "::add-mask::private"},
+	} {
+		if got := annotationMessage(tc.input); got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.input, got, tc.want)
+		}
+	}
+	var run Run
+	feed(&run,
+		`{"job":"CI/build","step":"compile","stepID":["compile"],"msg":"⭐ Run Main compile"}`,
+		`{"job":"CI/build","step":"compile","stepID":["compile"],"command":"error","arg":"unmasked-secret","msg":"  ❗  ::error file=src/main.go,line=12::***"}`,
+		`{"job":"CI/build","step":"compile","stepID":["compile"],"command":"ignored","msg":"::error::literal while commands stopped"}`,
+		`{"job":"CI/build","step":"compile","stepID":["compile"],"stepResult":"success","msg":"done"}`,
+	)
+	step := run.Jobs[0].Steps[0]
+	if len(step.Lines) != 2 || step.Lines[0] != "Error: src/main.go:12: ***" || step.Lines[1] != "::error::literal while commands stopped" || step.Status != StatusSuccess {
+		t.Fatalf("annotations lost masking, command handling, or exit status: %+v", step)
+	}
+	if !strings.Contains(run.Jobs[0].Raw[1], "::error") {
+		t.Fatal("raw log was changed")
+	}
+}

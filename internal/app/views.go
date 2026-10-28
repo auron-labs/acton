@@ -352,7 +352,7 @@ func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	switch {
 	case strings.HasPrefix(r.line, "❌"), strings.Contains(r.line, "::error"), strings.HasPrefix(strings.ToLower(r.line), "error:"):
 		color = errorColor
-	case strings.HasPrefix(r.line, "⚠"), strings.Contains(r.line, "::warning"), strings.HasPrefix(r.line, "tip:"):
+	case strings.HasPrefix(r.line, "⚠"), strings.Contains(r.line, "::warning"), strings.HasPrefix(strings.ToLower(r.line), "warning:"), strings.HasPrefix(r.line, "tip:"):
 		color = warningColor
 	case r.step == nil:
 		color = t.TextMuted
