@@ -72,6 +72,8 @@ type App struct {
 type logUIState struct {
 	list   components.ListState
 	runner components.ListState
+	filter stepFilter
+	output map[*act.Step]*components.ListState
 }
 
 // rawLog is the view-side raw log buffer of one job, appended lazily so the
@@ -297,6 +299,8 @@ func (a *App) clearRun() {
 	a.logMode = 0
 	a.elapsed = 0
 	a.rawLogs = nil
+	a.logUI.filter = filterAll
+	a.logUI.output = nil
 }
 
 // startRun launches act with the current settings.

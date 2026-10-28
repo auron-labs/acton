@@ -3,6 +3,9 @@ package act
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -46,29 +49,85 @@ func (s Status) Done() bool {
 
 // Step is one workflow step or runner setup/cleanup step.
 type Step struct {
-	Name    string // display name; "Pre "/"Post " prefix kept, "Main" dropped
-	Stage   string // "Pre", "Main", "Post", or "" for pseudo steps
-	Status  Status
-	Lines   []string
-	Started time.Time
-	Ended   time.Time
-	Dur     string // duration reported by act, e.g. "1.234s"
-	Open    bool
+	Name        string
+	Stage       string
+	Source      string
+	Fetched     bool
+	Parent      *Step `json:"-"`
+	Children    []*Step
+	Status      Status
+	Lines       []string
+	Started     time.Time
+	Ended       time.Time
+	Dur         time.Duration
+	Open        bool
+	UserToggled bool
+
+	ownStatus Status
+	ownEnded  time.Time
 }
 
-// Duration returns the reported duration, or elapsed time while a step runs.
-func (s *Step) Duration() string {
-	if s.Dur != "" {
+// Elapsed keeps timing numeric for filters and the waterfall.
+func (s *Step) Elapsed(now time.Time) time.Duration {
+	if len(s.Children) == 0 && s.Dur > 0 {
 		return s.Dur
 	}
 	if s.Started.IsZero() {
-		return ""
+		return 0
 	}
 	end := s.Ended
 	if end.IsZero() {
-		end = time.Now()
+		end = now
 	}
-	return end.Sub(s.Started).Round(time.Second).String()
+	return max(0, end.Sub(s.Started))
+}
+
+// FormatDuration is shared by finished and running steps and jobs.
+func FormatDuration(d time.Duration) string {
+	d = max(0, d)
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	seconds := int64(d.Round(time.Second) / time.Second)
+	return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
+}
+
+// Duration formats a step's reported or elapsed duration for display.
+func (s *Step) Duration() string {
+	if s.Started.IsZero() && s.Dur == 0 {
+		return ""
+	}
+	return FormatDuration(s.Elapsed(time.Now()))
+}
+
+// Keep the parent's own result when aggregating child failures and time bounds.
+func (s *Step) refresh() {
+	s.Status, s.Ended = s.ownStatus, s.ownEnded
+	running := s.ownStatus == StatusRunning
+	for _, child := range s.Children {
+		if s.Started.IsZero() || child.Started.Before(s.Started) {
+			s.Started = child.Started
+		}
+		if child.Ended.After(s.Ended) {
+			s.Ended = child.Ended
+		}
+		running = running || child.Status == StatusRunning || child.Ended.IsZero()
+		if child.Status == StatusFailure {
+			s.Status = StatusFailure
+		}
+	}
+	if running {
+		s.Ended = time.Time{}
+		if s.Status != StatusFailure {
+			s.Status = StatusRunning
+		}
+	}
+	if !s.UserToggled {
+		s.Open = s.Status == StatusRunning || s.Status == StatusFailure
+	}
+	if s.Parent != nil {
+		s.Parent.refresh()
+	}
 }
 
 // Item is either a step or a job-level output line, in arrival order.
@@ -88,7 +147,8 @@ type Job struct {
 	Ended   time.Time
 	Raw     []string // original JSON records, verbatim
 
-	byStep map[string]*Step
+	byStep        map[string]*Step
+	pendingClones []actionClone
 }
 
 // Duration returns elapsed time between the job's first and last output.
@@ -100,7 +160,7 @@ func (j *Job) Duration() string {
 	if end.IsZero() {
 		end = time.Now()
 	}
-	return end.Sub(j.Started).Round(time.Second).String()
+	return FormatDuration(end.Sub(j.Started))
 }
 
 // logEvent is act's logrus JSON envelope. StepID is a path for composite
@@ -112,6 +172,8 @@ type logEvent struct {
 	JobID         string         `json:"jobID"`
 	Matrix        map[string]any `json:"matrix"`
 	Step          string         `json:"step"`
+	Source        string         `json:"source"`
+	Uses          string         `json:"uses"`
 	StepID        []string       `json:"stepID"`
 	Stage         string         `json:"stage"`
 	RawOutput     bool           `json:"raw_output"`
@@ -150,20 +212,90 @@ func (j *Job) step(e logEvent, at time.Time) *Step {
 		return s
 	}
 	name := e.Step
-	if name == "" && len(e.StepID) > 0 {
+	if len(e.StepID) > 1 || name == "" && len(e.StepID) > 0 {
 		name = e.StepID[len(e.StepID)-1]
 	}
-	if e.Stage == "Pre" || e.Stage == "Post" {
+	if len(e.StepID) <= 1 && (e.Stage == "Pre" || e.Stage == "Post") {
 		name = e.Stage + " " + name
 	}
-	s := &Step{Name: name, Stage: e.Stage, Status: StatusRunning, Started: at, Open: true}
+	s := &Step{Name: name, Stage: e.Stage, Status: StatusRunning, ownStatus: StatusRunning, Started: at, Open: true}
 	if j.byStep == nil {
 		j.byStep = make(map[string]*Step)
 	}
+	if len(e.StepID) > 1 {
+		parentEvent := e
+		parentEvent.StepID = e.StepID[:len(e.StepID)-1]
+		s.Parent = j.step(parentEvent, at)
+		s.Parent.Children = append(s.Parent.Children, s)
+	} else {
+		j.Steps = append(j.Steps, s)
+		j.Items = append(j.Items, Item{Step: s})
+	}
 	j.byStep[key] = s
-	j.Steps = append(j.Steps, s)
-	j.Items = append(j.Items, Item{Step: s})
 	return s
+}
+
+var (
+	actionSourceRe = regexp.MustCompile(`^(?:[[:alnum:]_.-]+/[[:alnum:]_./-]+@[^[:space:]]+|\./[^[:space:]]+)$`)
+	shaRe          = regexp.MustCompile(`^[a-fA-F0-9]{8,40}$`)
+	cloneRe        = regexp.MustCompile(`^☁\s+git clone '([^']+)' # ref=(\S+)`)
+)
+
+type actionClone struct{ repo, line string }
+
+func shortSource(source string) string {
+	repo, ref, ok := strings.Cut(source, "@")
+	if ok && shaRe.MatchString(ref) {
+		return repo + "@" + ref[:7]
+	}
+	return source
+}
+
+func actionRepo(source string) string {
+	repo, _, _ := strings.Cut(source, "@")
+	parts := strings.Split(repo, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.ToLower(strings.Join(parts[:2], "/"))
+}
+
+func (j *Job) describeStep(s *Step, e logEvent, name string) {
+	if name != "" {
+		displayName := name
+		if actionSourceRe.MatchString(name) {
+			displayName, _, _ = strings.Cut(name, "@")
+			if strings.HasPrefix(displayName, "./") {
+				displayName = path.Base(displayName)
+			}
+		}
+		s.Name = displayName
+		if s.Parent == nil && (e.Stage == "Pre" || e.Stage == "Post") {
+			s.Name = e.Stage + " " + displayName
+		}
+	}
+	source := e.Source
+	if source == "" {
+		source = e.Uses
+	}
+	if source == "" && actionSourceRe.MatchString(name) {
+		source = name
+	}
+	if source == "" && s.Parent == nil && actionSourceRe.MatchString(e.Step) {
+		source = e.Step
+	}
+	if source != "" {
+		s.Source = shortSource(source)
+	}
+	for i, clone := range j.pendingClones {
+		if actionRepo(s.Source) != clone.repo {
+			continue
+		}
+		s.Fetched = true
+		s.Lines = append(s.Lines, clone.line)
+		j.pendingClones = append(j.pendingClones[:i], j.pendingClones[i+1:]...)
+		break
+	}
 }
 
 func resultStatus(result string) (Status, bool) {
@@ -257,16 +389,27 @@ func (r *Run) Feed(line string) {
 	}
 	if status, ok := resultStatus(e.StepResult); ok && (e.Step != "" || len(e.StepID) > 0) {
 		s := j.step(e, at)
-		s.Status, s.Ended, s.Open = status, at, status == StatusFailure
+		s.ownStatus, s.ownEnded = status, at
 		if e.ExecutionTime != nil {
-			s.Dur = e.ExecutionTime.Round(time.Millisecond).String()
+			s.Dur = *e.ExecutionTime
 		}
+		j.describeStep(s, e, "")
+		s.refresh()
 		return
 	}
 	// act has no structured start-event field. Restrict recognition to records
-	// with step metadata, never user output, and use the metadata for the name.
+	// with step metadata, never user output; composite metadata names the parent.
 	if (e.Step != "" || len(e.StepID) > 0) && strings.HasPrefix(strings.TrimSpace(msg), "⭐ Run ") {
-		j.step(e, at)
+		s := j.step(e, at)
+		name := strings.TrimPrefix(strings.TrimSpace(msg), "⭐ Run ")
+		for _, stage := range []string{"Main ", "Pre ", "Post "} {
+			if strings.HasPrefix(name, stage) {
+				name = strings.TrimPrefix(name, stage)
+				break
+			}
+		}
+		j.describeStep(s, e, name)
+		s.refresh()
 		return
 	}
 	// Unsupported platforms do not have a jobResult in act 0.2.89.
@@ -313,13 +456,30 @@ func annotationMessage(msg string) string {
 }
 
 func (r *Run) addMessage(j *Job, e logEvent, at time.Time, msg string, raw bool) {
+	msg = strings.TrimRight(msg, "\r\n")
+	if !raw {
+		if match := cloneRe.FindStringSubmatch(strings.TrimSpace(msg)); match != nil {
+			u, err := url.Parse(match[1])
+			if err == nil {
+				repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+				j.pendingClones = append(j.pendingClones, actionClone{repo: strings.ToLower(repo), line: msg})
+				return
+			}
+		}
+	}
+
 	if e.Step != "" || len(e.StepID) > 0 {
 		s := j.byStep[e.stepKey()]
-		if s == nil && raw {
+		if s == nil && (raw || len(e.StepID) > 1) {
 			s = j.step(e, at)
 		}
 		if s != nil {
+			if !raw && s.Source == "" && strings.HasPrefix(msg, "Wrote command ") {
+				s.Source = "run"
+			}
 			s.Lines = append(s.Lines, msg)
+			j.describeStep(s, e, "")
+			s.refresh()
 			return
 		}
 	}
@@ -327,10 +487,18 @@ func (r *Run) addMessage(j *Job, e logEvent, at time.Time, msg string, raw bool)
 }
 
 func (j *Job) finishSteps(st Status, at time.Time) {
-	for _, s := range j.Steps {
-		if s.Status == StatusRunning {
-			s.Status, s.Ended = st, at
+	var finish func(*Step)
+	finish = func(s *Step) {
+		for _, child := range s.Children {
+			finish(child)
 		}
+		if s.ownStatus == StatusRunning {
+			s.ownStatus, s.ownEnded = st, at
+		}
+		s.refresh()
+	}
+	for _, s := range j.Steps {
+		finish(s)
 	}
 }
 

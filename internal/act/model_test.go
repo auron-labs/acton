@@ -42,10 +42,10 @@ func TestFeedParsesJobsAndSteps(t *testing.T) {
 	if setup.Name != "Set up job" || setup.Status != StatusSuccess || len(setup.Lines) != 2 {
 		t.Fatalf("setup: %+v", setup)
 	}
-	if checkout.Stage != "Main" || checkout.Name != "actions/checkout@v4" || checkout.Dur != "1.5s" || checkout.Open {
+	if checkout.Stage != "Main" || checkout.Name != "actions/checkout" || checkout.Dur != 1500*time.Millisecond || checkout.Open {
 		t.Fatalf("checkout: %+v", checkout)
 	}
-	if test.Status != StatusFailure || len(test.Lines) != 1 || !test.Open || test.Dur != "2s" {
+	if test.Status != StatusFailure || len(test.Lines) != 1 || !test.Open || test.Dur != 2*time.Second {
 		t.Fatalf("test: %+v", test)
 	}
 	if lint := r.Jobs[1]; lint.Status != StatusSuccess || lint.Name != "lint" {
@@ -91,13 +91,13 @@ func TestFeedStepIdentityAndStages(t *testing.T) {
 		`{"job":"CI/build","step":"same name","stepID":["a"],"stage":"Post","stepResult":"success","msg":"post done"}`,
 	)
 	j := r.Jobs[0]
-	if len(j.Steps) != 4 {
+	if len(j.Steps) != 3 {
 		t.Fatalf("steps=%+v", j.Steps)
 	}
 	if s := j.Steps[0]; len(s.Lines) != 1 || s.Lines[0] != "parent output" || s.Status != StatusSuccess {
 		t.Fatalf("parent: %+v", s)
 	}
-	if j.Steps[1].Status != StatusSuccess || j.Steps[2].Status != StatusSkipped || j.Steps[3].Name != "Post same name" {
+	if j.Steps[0].Children[0].Status != StatusSuccess || j.Steps[1].Status != StatusSkipped || j.Steps[2].Name != "Post same name" {
 		t.Fatalf("incorrect composite/stage results: %+v", j.Steps)
 	}
 }
@@ -143,7 +143,7 @@ func TestFeedTimestampsAndFinish(t *testing.T) {
 	)
 	r.Finish(StatusCancelled)
 	j := r.Jobs[0]
-	if j.Duration() != "3s" || j.Status != StatusSuccess || j.Steps[0].Dur != "1.235s" || j.Steps[0].Status != StatusFailure {
+	if j.Duration() != "3.0s" || j.Status != StatusSuccess || j.Steps[0].Dur != 1234567890 || j.Steps[0].Status != StatusFailure {
 		t.Fatalf("finished job: %+v step: %+v", j, j.Steps[0])
 	}
 	if s := j.Steps[0]; !s.Started.Equal(time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)) || s.Ended.Sub(s.Started) != 2*time.Second {
@@ -213,5 +213,196 @@ func TestGitHubAnnotations(t *testing.T) {
 	}
 	if !strings.Contains(run.Jobs[0].Raw[1], "::error") {
 		t.Fatal("raw log was changed")
+	}
+}
+
+func eventJSON(t *testing.T, e logEvent) string {
+	t.Helper()
+	b, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestCompositeSteps(t *testing.T) {
+	for _, tc := range []struct {
+		name, stage string
+		failed      bool
+	}{
+		{"success", "Main", false}, {"child failure", "Main", true}, {"post children", "Post", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var run Run
+			start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+			send := func(ids []string, second int, msg, result string) {
+				run.Feed(eventJSON(t, logEvent{Job: "CI/build", Step: "setup", StepID: ids, Stage: tc.stage, Time: start.Add(time.Duration(second) * time.Second).Format(time.RFC3339Nano), Message: &msg, StepResult: result}))
+			}
+			// A child can arrive before its parent start record.
+			names := []string{"Restore cache", "Install tools", "composite-3"}
+			for i, name := range names {
+				id := []string{"3", "composite-" + string(rune('1'+i))}
+				if i < 2 {
+					send(id, i*3, "⭐ Run "+tc.stage+" "+name, "")
+				} else {
+					send(id, i*3, "output without a start marker", "")
+				}
+				result := "success"
+				if tc.failed && i == 1 {
+					result = "failure"
+				}
+				send(id, i*3+2, "done", result)
+				parent := run.Jobs[0].Steps[0]
+				want := StatusRunning
+				if tc.failed && i >= 1 {
+					want = StatusFailure
+				}
+				if parent.Status != want || !parent.Open {
+					t.Fatalf("during run: %+v", parent)
+				}
+			}
+			send([]string{"3"}, 7, "parent done", "success")
+			j := run.Jobs[0]
+			if len(j.Steps) != 1 || len(j.Items) != 1 {
+				t.Fatalf("children leaked into top level: %+v", j)
+			}
+			parent := j.Steps[0]
+			want := StatusSuccess
+			if tc.failed {
+				want = StatusFailure
+			}
+			if parent.Status != want || parent.Open != tc.failed || !parent.Started.Equal(start) || !parent.Ended.Equal(start.Add(8*time.Second)) {
+				t.Fatalf("aggregate: %+v", parent)
+			}
+			if len(parent.Children) != 3 {
+				t.Fatalf("children: %+v", parent.Children)
+			}
+			for i, child := range parent.Children {
+				if child.Name != names[i] || child.Parent != parent || child.Stage != tc.stage {
+					t.Fatalf("child %d: %+v", i, child)
+				}
+			}
+		})
+	}
+}
+
+func TestCloneAttachment(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, url, wantSource string
+		nested                        bool
+	}{
+		{"remote sha", "actions/cache@55c83451234567890", "https://github.com/actions/cache", "actions/cache@55c8345", false},
+		{"nested action", "actions/cache@v4", "https://github.com/actions/cache.git", "actions/cache@v4", true},
+		{"subdirectory", "actions/cache/restore@v4", "https://github.com/actions/cache", "actions/cache/restore@v4", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var r Run
+			clone := "  ☁  git clone '" + tc.url + "' # ref=v4"
+			r.Feed(eventJSON(t, logEvent{Job: "CI/build", Message: &clone}))
+			other := "⭐ Run Main other/action@v1"
+			r.Feed(eventJSON(t, logEvent{Job: "CI/build", Step: "other/action@v1", StepID: []string{"1"}, Stage: "Main", Message: &other}))
+			ids := []string{"2"}
+			if tc.nested {
+				ids = append(ids, "composite-1")
+			}
+			msg := "⭐ Run Main " + tc.source
+			r.Feed(eventJSON(t, logEvent{Job: "CI/build", Step: "setup", StepID: ids, Stage: "Main", Message: &msg}))
+			j := r.Jobs[0]
+			step := j.Steps[1]
+			if tc.nested {
+				step = step.Children[0]
+			}
+			if !step.Fetched || step.Source != tc.wantSource || len(step.Lines) != 1 || step.Lines[0] != clone || j.Steps[0].Fetched {
+				t.Fatalf("wrong attachment: %+v", step)
+			}
+			if len(j.Items) != 2 || !strings.Contains(j.Raw[0], "git clone") {
+				t.Fatalf("clone row/raw: %+v", j)
+			}
+			// One clone only marks the next use, not subsequent uses of that repo.
+			ids = []string{"4"}
+			r.Feed(eventJSON(t, logEvent{Job: "CI/build", Step: tc.source, StepID: ids, Stage: "Main", Message: &msg}))
+			if j.Steps[2].Fetched {
+				t.Fatal("clone reused")
+			}
+		})
+	}
+}
+
+func TestMessageNewlines(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"line\n", "line"}, {"line\r\n", "line"}, {"  line\nnext\r\n\n", "  line\nnext"}, {"\n", ""}, {"line  ", "line  "},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			var r Run
+			record := eventJSON(t, logEvent{Job: "CI/build", Step: "script", StepID: []string{"1"}, RawOutput: true, Message: &tc.input})
+			r.Feed(record)
+			j := r.Jobs[0]
+			if j.Steps[0].Lines[0] != tc.want || j.Raw[0] != record {
+				t.Fatalf("lines=%q raw=%q", j.Steps[0].Lines, j.Raw)
+			}
+		})
+	}
+}
+
+func TestDurationFormatting(t *testing.T) {
+	for _, tc := range []struct {
+		duration time.Duration
+		want     string
+	}{
+		{0, "0.0s"}, {183 * time.Millisecond, "0.2s"}, {4300 * time.Millisecond, "4.3s"}, {14146 * time.Millisecond, "14.1s"}, {59 * time.Second, "59.0s"}, {time.Minute, "1m 0s"}, {167 * time.Second, "2m 47s"}, {time.Hour, "60m 0s"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			start := time.Unix(0, 0)
+			step := &Step{Started: start, Ended: start.Add(tc.duration), Dur: tc.duration}
+			job := &Job{Started: start, Ended: start.Add(tc.duration)}
+			if FormatDuration(tc.duration) != tc.want || step.Duration() != tc.want || job.Duration() != tc.want {
+				t.Fatalf("formatter=%s step=%s job=%s", FormatDuration(tc.duration), step.Duration(), job.Duration())
+			}
+		})
+	}
+}
+
+func TestStepAutoExpansion(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		toggled, open bool
+		result        string
+		want          bool
+	}{
+		{"auto closes", false, true, "success", false},
+		{"auto failure", false, true, "failure", true},
+		{"user opened", true, true, "success", true},
+		{"user closed", true, false, "success", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var r Run
+			feed(&r, `{"job":"CI/build","step":"test","stepID":["1"],"msg":"⭐ Run Main test"}`)
+			step := r.Jobs[0].Steps[0]
+			step.UserToggled, step.Open = tc.toggled, tc.open
+			msg := "done"
+			r.Feed(eventJSON(t, logEvent{Job: "CI/build", Step: "test", StepID: []string{"1"}, StepResult: tc.result, Message: &msg}))
+			if step.Open != tc.want {
+				t.Fatalf("open=%v", step.Open)
+			}
+		})
+	}
+}
+
+func TestStepSources(t *testing.T) {
+	for _, tc := range []struct{ label, uses, wantName, wantSource string }{
+		{"actions/checkout@d3c42e1234567890", "", "actions/checkout", "actions/checkout@d3c42e1"},
+		{"./.github/actions/setup", "", "setup", "./.github/actions/setup"},
+		{"Restore cache", "actions/cache@55c83451234567890", "Restore cache", "actions/cache@55c8345"},
+		{"Script with no type metadata", "", "Script with no type metadata", ""},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			var r Run
+			msg := "⭐ Run Main " + tc.label
+			r.Feed(eventJSON(t, logEvent{Job: "build", Step: tc.label, StepID: []string{"1"}, Stage: "Main", Uses: tc.uses, Message: &msg}))
+			s := r.Jobs[0].Steps[0]
+			if s.Name != tc.wantName || s.Source != tc.wantSource {
+				t.Fatalf("name=%q source=%q", s.Name, s.Source)
+			}
+		})
 	}
 }

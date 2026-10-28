@@ -67,7 +67,7 @@ func (a *App) headerActions(c *ui.Context) {
 	ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 		switch st := a.overallStatus(); {
 		case a.running:
-			components.Text(c, time.Since(a.started).Round(time.Second).String()).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
+			components.Text(c, act.FormatDuration(time.Since(a.started))).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
 			stop := components.Button(c, "", components.ButtonSecondary).Label("Stop run")
 			stop.Children(func() {
 				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
@@ -81,7 +81,7 @@ func (a *App) headerActions(c *ui.Context) {
 		default:
 			if st.Done() && len(a.run.Jobs)+len(a.run.Runner) > 0 {
 				statusIcon(c, st, 4.5)
-				components.Text(c, a.elapsed.Round(time.Second).String()).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
+				components.Text(c, act.FormatDuration(a.elapsed)).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
 			}
 			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow").Disabled(a.settings.Dir == "")
 			run.Children(func() {
@@ -265,8 +265,9 @@ func (a *App) logPane(c *ui.Context, j *act.Job) {
 			a.rawLogView(c, j)
 		} else {
 			a.stepSummary(c, j)
-			timelineColumns(c)
-			a.stepsView(c, j)
+			axis := jobTimeAxis(j, time.Now())
+			timelineColumns(c, axis)
+			a.stepsView(c, j, axis)
 		}
 	})
 }
@@ -284,26 +285,20 @@ func (a *App) runnerPane(c *ui.Context) {
 	})
 }
 
-// stepsView renders the job's flat row list (step headers + open lines) in a
-// virtualized, end-following list, like GitHub's job log.
-func (a *App) stepsView(c *ui.Context, j *act.Job) {
-	rows := flatRows(j)
-	longest := time.Duration(0)
-	for _, step := range j.Steps {
-		longest = max(longest, stepDuration(step))
-	}
+// stepsView keeps each bounded output panel as one virtual row.
+func (a *App) stepsView(c *ui.Context, j *act.Job, axis timeAxis) {
+	rows := flatRows(j, a.logUI.filter)
 	a.logUI.list.Key = func(i int) any { return rows[i].key }
 	components.List(c, &a.logUI.list, len(rows), func(i int) {
 		r := rows[i]
-		if r.output {
-			stepOutputHeader(c, r.step)
-			return
+		switch {
+		case r.output:
+			a.stepOutput(c, r)
+		case r.step != nil:
+			a.stepHeaderRow(c, r, axis)
+		default:
+			a.logLineRow(c, r)
 		}
-		if r.step != nil && r.key == r.step {
-			a.stepHeaderRow(c, r.step, longest)
-			return
-		}
-		a.logLineRow(c, r)
 	}).Fill()
 }
 
@@ -337,7 +332,7 @@ func (a *App) linesView(c *ui.Context, lines []string) {
 // logLineRow is one output line beneath a step header (or job level).
 func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	t := c.Theme()
-	indent := t.Space(8)
+	indent := float32(12)
 	if r.step == nil {
 		indent = t.Space(2.5)
 	}
@@ -362,42 +357,51 @@ func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	})
 }
 
-// rowRef is a step header, output toolbar, or log line; key preserves identity
-// even for blank output lines.
+// rowRef is a header, a bounded output panel, or a job diagnostic.
 type rowRef struct {
 	step   *act.Step
 	line   string
 	key    any
 	output bool
+	number string
+	depth  int
 }
 
-type lineKey struct {
-	step *act.Step
-	idx  int
-}
 type (
 	orphanKey struct{ idx int }
 	outputKey struct{ step *act.Step }
 )
 
-// flatRows expands a job's items into the visible row list: each step's
-// header followed by its lines while open.
-func flatRows(j *act.Job) []rowRef {
+func flatRows(j *act.Job, filter stepFilter) []rowRef {
 	rows := make([]rowRef, 0, len(j.Items))
+	var add func(*act.Step, string, int)
+	add = func(s *act.Step, number string, depth int) {
+		if !filter.matches(s) {
+			return
+		}
+		row := rowRef{step: s, key: s, number: number, depth: depth}
+		rows = append(rows, row)
+		if s.Open {
+			for i, child := range s.Children {
+				add(child, fmt.Sprintf("%s.%d", number, i+1), depth+1)
+			}
+			if s.Open && len(s.Lines) > 0 {
+				row.output = true
+				row.key = outputKey{s}
+				rows = append(rows, row)
+			}
+		}
+	}
+	number := 0
 	for i, it := range j.Items {
 		if it.Step == nil {
-			rows = append(rows, rowRef{line: it.Line, key: orphanKey{i}})
+			if filter == filterAll {
+				rows = append(rows, rowRef{line: it.Line, key: orphanKey{i}})
+			}
 			continue
 		}
-		rows = append(rows, rowRef{step: it.Step, key: it.Step})
-		if it.Step.Open {
-			if len(it.Step.Lines) > 0 {
-				rows = append(rows, rowRef{step: it.Step, output: true, key: outputKey{it.Step}})
-			}
-			for li, l := range it.Step.Lines {
-				rows = append(rows, rowRef{step: it.Step, line: l, key: lineKey{it.Step, li}})
-			}
-		}
+		number++
+		add(it.Step, strconv.Itoa(number), 0)
 	}
 	return rows
 }
