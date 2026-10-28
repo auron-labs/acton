@@ -8,14 +8,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/kballard/go-shellquote"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/shells/plain"
+	"gopkg.in/yaml.v3"
 )
 
 // App is the application's state. Views are pure functions of it; act output
@@ -23,10 +28,17 @@ import (
 type App struct {
 	win *mygo.Window
 
-	settings   settings.Settings
-	eventSel   string // event dropdown value; "custom" reveals a text field
-	eventOther string
-	workflows  []string
+	settings     settings.Settings
+	eventSel     string // event dropdown value; "custom" reveals a text field
+	eventOther   string
+	workflows    []string
+	workflowJobs []string
+	workflowMeta string
+	workflowErr  string
+	configOpen   [4]bool
+	envTab       int
+	showDefaults bool
+	fileErr      string
 
 	run     act.Run
 	runner  *act.Runner
@@ -122,7 +134,7 @@ func newApp() *App {
 	a := &App{
 		settings: *settings.Default(""),
 		eventSel: "push",
-		cfgW:     360,
+		cfgW:     320,
 		jobW:     240,
 	}
 	a.logUI.list.FollowEnd = true
@@ -163,6 +175,91 @@ func (a *App) setDir(dir string) {
 	if a.settings.Workflow != "" && !contains(a.workflows, a.settings.Workflow) {
 		a.workflows = append(a.workflows, a.settings.Workflow)
 	}
+	a.eventSel = a.settings.Event
+	a.eventOther = a.settings.Event
+	if !contains(workflowEvents, a.eventSel) {
+		a.eventSel = "custom"
+	}
+	a.fileErr = ""
+	a.loadWorkflow()
+}
+
+// loadWorkflow refreshes the selector metadata only when the target changes.
+func (a *App) loadWorkflow() {
+	a.workflowJobs, a.workflowMeta, a.workflowErr = nil, "", ""
+	if a.settings.Workflow == "" {
+		a.workflowMeta = fmt.Sprintf("%d workflows", len(a.workflows))
+		return
+	}
+	path := a.settings.Workflow
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(a.settings.Dir, path)
+	}
+	//nolint:gosec // G304: the native project picker and workflow menu select this local file.
+	data, err := os.ReadFile(path)
+	var workflow struct {
+		Jobs map[string]yaml.Node `yaml:"jobs"`
+		On   yaml.Node            `yaml:"on"`
+	}
+	if err == nil {
+		err = yaml.Unmarshal(data, &workflow)
+	}
+	if err != nil {
+		a.workflowErr = "Cannot read workflow: " + err.Error()
+		return
+	}
+	for id := range workflow.Jobs {
+		a.workflowJobs = append(a.workflowJobs, id)
+	}
+	slices.Sort(a.workflowJobs)
+	events := []string{}
+	switch workflow.On.Kind {
+	case yaml.ScalarNode:
+		events = append(events, workflow.On.Value)
+	case yaml.SequenceNode:
+		for _, event := range workflow.On.Content {
+			events = append(events, event.Value)
+		}
+	case yaml.MappingNode:
+		for i := 0; i < len(workflow.On.Content); i += 2 {
+			events = append(events, workflow.On.Content[i].Value)
+		}
+	case yaml.DocumentNode, yaml.AliasNode:
+	}
+	a.workflowMeta = fmt.Sprintf("%d jobs", len(a.workflowJobs))
+	if len(events) > 0 {
+		a.workflowMeta += " · on " + strings.Join(events, ", ")
+	}
+}
+
+// pickConfigFile binds the chosen path to act's existing file flags.
+func (a *App) pickConfigFile(kind string) {
+	if a.win == nil {
+		return
+	}
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.win, Title: "Choose " + kind + " file"})
+		a.win.Update(func() {
+			if err != nil {
+				a.fileErr = "Cannot choose file: " + err.Error()
+				return
+			}
+			if len(paths) == 0 {
+				return
+			}
+			a.fileErr = ""
+			switch kind {
+			case "Secrets":
+				a.settings.SecretFile = paths[0]
+			case "Env":
+				a.settings.EnvFile = paths[0]
+			case "Vars":
+				a.settings.VarFile = paths[0]
+			case "Event payload":
+				a.settings.EventPayload = paths[0]
+			}
+		})
+	}()
 }
 
 // clearRun drops run state for a fresh directory or a manual clear.
@@ -304,23 +401,27 @@ func friendlyExit(err error) string {
 	return "act failed: " + err.Error()
 }
 
-// cmdline renders the exact command for the preview row.
+// cmdline renders a shell-quoted command with secret values redacted.
 func (a *App) cmdline() string {
 	args, err := a.settings.Args()
 	if err != nil {
 		return "act"
 	}
-	var b strings.Builder
-	b.WriteString("act")
-	for _, w := range args {
-		b.WriteByte(' ')
-		if strings.ContainsAny(w, " \t\"'") {
-			fmt.Fprintf(&b, "%q", w)
-		} else {
-			b.WriteString(w)
+	for i, w := range args {
+		// Keep secret values out of both command previews and clipboard copies.
+		switch {
+		case i > 0 && (args[i-1] == "-s" || args[i-1] == "--secret"):
+			name, _, _ := strings.Cut(w, "=")
+			args[i] = name + "=••••••••"
+		case strings.HasPrefix(w, "--secret="):
+			name, _, _ := strings.Cut(strings.TrimPrefix(w, "--secret="), "=")
+			args[i] = "--secret=" + name + "=••••••••"
+		case strings.HasPrefix(w, "-s") && w != "-s":
+			name, _, _ := strings.Cut(w[2:], "=")
+			args[i] = "-s" + name + "=••••••••"
 		}
 	}
-	return b.String()
+	return "act " + shellquote.Join(args...)
 }
 
 func contains(list []string, v string) bool {

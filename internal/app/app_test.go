@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -126,7 +127,12 @@ func TestProjectSelectionAndConfiguration(t *testing.T) {
 		t.Fatalf("run area missing at minimum size: %q", tt.Texts())
 	}
 	// The compact pane remains scrollable, so its final field can be edited.
-	tt.Scroll(150, 350, 0, 1400)
+	tt.Scroll(150, 250, 0, 700)
+	if err := tt.Click("Advanced"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	tt.Scroll(150, 250, 0, 1400)
 	if err := tt.Click("Additional act flags"); err != nil {
 		t.Fatal(err)
 	}

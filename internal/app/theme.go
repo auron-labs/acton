@@ -87,3 +87,13 @@ func inputBackground(c *ui.Context) ui.Color {
 	}
 	return ui.Hex("#FFFFFF")
 }
+
+func sectionBorder(c *ui.Context) ui.Color {
+	if c.Preferences().HighContrast {
+		return c.Theme().Border
+	}
+	if c.Theme().Dark {
+		return ui.Hex("#232933")
+	}
+	return ui.Hex("#DCE0E6")
+}

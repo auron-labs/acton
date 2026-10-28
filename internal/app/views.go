@@ -4,7 +4,6 @@ import (
 	"actgui/internal/act"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +29,7 @@ func (a *App) view(c *ui.Context) {
 				return
 			}
 			components.Split(c, &a.cfgW, func() { a.configView(c) }, func() { a.runView(c) },
-				components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 360}).Fill()
+				components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 320}).Fill()
 		})
 	})
 }
@@ -95,104 +94,6 @@ func (a *App) headerActions(c *ui.Context) {
 				a.startRun()
 			}
 		}
-	})
-}
-
-// configView is the left pane: the run configuration form in a scroll view.
-func (a *App) configView(c *ui.Context) {
-	t := c.Theme()
-	components.ScrollView(c, components.ScrollViewOptions{}).Fill().Background(panelBackground(c)).Padding(t.Space(3)).Children(func() {
-		ui.Column(c).FillWidth().Gap(t.Space(2.5)).Children(func() {
-			sectionTitle(c, "Target")
-			field(c, "Workflow", func() {
-				opts := make([]components.NativeSelectOption[string], 0, len(a.workflows)+1)
-				opts = append(opts, components.NativeSelectOption[string]{Value: "", Label: "All workflows"})
-				for _, w := range a.workflows {
-					opts = append(opts, components.NativeSelectOption[string]{Value: w, Label: filepath.Base(w)})
-				}
-				components.NativeSelect(c, &a.settings.Workflow, opts).Trigger.FillWidth().Label("Workflow")
-			})
-			field(c, "Event", func() {
-				ui.Column(c).FillWidth().Gap(t.Space(1.5)).Children(func() {
-					events := []string{"push", "pull_request", "workflow_dispatch", "schedule", "release", "issues", "create", "delete", "fork"}
-					opts := make([]components.NativeSelectOption[string], 0, len(events)+1)
-					for _, e := range events {
-						opts = append(opts, components.NativeSelectOption[string]{Value: e, Label: e})
-					}
-					opts = append(opts, components.NativeSelectOption[string]{Value: "custom", Label: "Custom…"})
-					sel := components.NativeSelect(c, &a.eventSel, opts)
-					sel.Trigger.FillWidth().Label("Event")
-					if sel.Changed() {
-						if a.eventSel == "custom" {
-							a.eventOther = a.settings.Event
-						} else {
-							a.settings.Event = a.eventSel
-						}
-					}
-					if a.eventSel == "custom" {
-						tb := components.TextBox(c, &a.eventOther, components.TextBoxOptions{}).
-							Placeholder("event name").Label("Custom event name").FillWidth().Background(inputBackground(c))
-						if tb.Changed() {
-							a.settings.Event = a.eventOther
-						}
-					}
-				})
-			})
-			field(c, "Job", func() {
-				styleConfigInput(c, components.TextBox(c, &a.settings.Job, components.TextBoxOptions{}).
-					Placeholder("All jobs").Label("Job ID filter"))
-			})
-
-			sectionTitle(c, "Images")
-			field(c, "Platforms", func() {
-				styleConfigInput(c, components.TagInput(c, &a.settings.Platforms).Placeholder("runner=image").Label("Platform to image map").Element)
-			})
-			field(c, "Container architecture", func() {
-				styleConfigInput(c, components.TextBox(c, &a.settings.Arch, components.TextBoxOptions{}).
-					Placeholder("linux/amd64").Label("Container architecture"))
-			})
-
-			sectionTitle(c, "Variables")
-			field(c, "Secrets", func() {
-				styleConfigInput(c, components.TagInput(c, &a.settings.Secrets).Placeholder("NAME=VALUE").Label("Secrets").Element)
-			})
-			field(c, "Environment", func() {
-				styleConfigInput(c, components.TagInput(c, &a.settings.Env).Placeholder("NAME=VALUE").Label("Environment variables").Element)
-			})
-			field(c, "Vars", func() {
-				styleConfigInput(c, components.TagInput(c, &a.settings.Vars).Placeholder("NAME=VALUE").Label("Variables").Element)
-			})
-			field(c, "Action inputs", func() {
-				styleConfigInput(c, components.TagInput(c, &a.settings.Inputs).Placeholder("name=value").Label("workflow_dispatch inputs").Element)
-			})
-
-			sectionTitle(c, "Options")
-			ui.Column(c).Gap(t.Space(2.5)).Children(func() {
-				components.Switch(c, &a.settings.DryRun, "Dry run (plan only)")
-				components.Switch(c, &a.settings.Verbose, "Verbose output")
-				components.Switch(c, &a.settings.Pull, "Always pull images")
-				components.Switch(c, &a.settings.Reuse, "Reuse containers")
-				components.Switch(c, &a.settings.Bind, "Bind workdir (no copy)")
-				components.Switch(c, &a.settings.Quiet, "Quiet (no progress)")
-			})
-			field(c, "Event payload file", func() {
-				styleConfigInput(c, components.TextBox(c, &a.settings.EventPayload, components.TextBoxOptions{}).
-					Placeholder("path/to/event.json").Label("Event payload JSON file"))
-			})
-			field(c, "Extra act args", func() {
-				styleConfigInput(c, components.TextBox(c, &a.settings.ExtraArgs, components.TextBoxOptions{}).
-					Placeholder("--matrix os:linux …").Label("Additional act flags"))
-			})
-
-			if len(a.settings.ActrcFiles) > 0 {
-				ui.Column(c).Gap(t.Space(1)).Children(func() {
-					components.Text(c, "Defaults from .actrc").FontSize(11).Bold().TextColor(t.TextMuted)
-					for _, f := range a.settings.ActrcFiles {
-						components.Text(c, abbrevHome(f)).FontSize(11).Font("JetBrains Mono").TextColor(t.TextMuted).MaxLines(2).Ellipsis("…")
-					}
-				})
-			}
-		})
 	})
 }
 
@@ -363,6 +264,8 @@ func (a *App) logPane(c *ui.Context, j *act.Job) {
 		if a.logMode == 1 {
 			a.rawLogView(c, j)
 		} else {
+			a.stepSummary(c, j)
+			timelineColumns(c)
 			a.stepsView(c, j)
 		}
 	})
@@ -385,11 +288,19 @@ func (a *App) runnerPane(c *ui.Context) {
 // virtualized, end-following list, like GitHub's job log.
 func (a *App) stepsView(c *ui.Context, j *act.Job) {
 	rows := flatRows(j)
+	longest := time.Duration(0)
+	for _, step := range j.Steps {
+		longest = max(longest, stepDuration(step))
+	}
 	a.logUI.list.Key = func(i int) any { return rows[i].key }
 	components.List(c, &a.logUI.list, len(rows), func(i int) {
 		r := rows[i]
-		if r.step != nil && r.line == "" {
-			a.stepHeaderRow(c, r.step)
+		if r.output {
+			stepOutputHeader(c, r.step)
+			return
+		}
+		if r.step != nil && r.key == r.step {
+			a.stepHeaderRow(c, r.step, longest)
 			return
 		}
 		a.logLineRow(c, r)
@@ -423,30 +334,6 @@ func (a *App) linesView(c *ui.Context, lines []string) {
 	}).Fill()
 }
 
-// stepHeaderRow is one collapsible step header in the log list.
-func (a *App) stepHeaderRow(c *ui.Context, s *act.Step) {
-	t := c.Theme()
-	row := ui.Row(c).FillWidth().Padding(t.Space(1.5), t.Space(2.5)).Gap(t.Space(2)).AlignItems(ui.Center)
-	if row.Hovered() {
-		row.Background(t.Text.Alpha(.04))
-	}
-	row.Label("Step " + s.Name).Cursor(ui.CursorPointer).OnClick(func() { s.Open = !s.Open })
-	row.Children(func() {
-		statusIcon(c, s.Status, 4)
-		ui.Row(c).Grow(1).MinWidth(0).Gap(t.Space(2)).AlignItems(ui.Baseline).Children(func() {
-			components.Text(c, s.Name).SingleLine()
-			if d := s.Duration(); d != "" {
-				components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine().Shrink(0)
-			}
-		})
-		chev := lucide.ChevronRight()
-		if s.Open {
-			chev = lucide.ChevronDown()
-		}
-		components.Icon(c, chev).Size(t.Space(3.5), t.Space(3.5)).TextColor(t.TextMuted).Shrink(0)
-	})
-}
-
 // logLineRow is one output line beneath a step header (or job level).
 func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	t := c.Theme()
@@ -456,11 +343,17 @@ func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	}
 	row := ui.Row(c).FillWidth().Padding(0, t.Space(2.5), 0, indent)
 	color := t.Text
+	errorColor, warningColor := t.Danger, t.Warning
+	if r.step != nil {
+		row.Background(ui.Hex("#07090C"))
+		color = ui.Hex("#C6CFDA")
+		errorColor, warningColor = ui.Hex("#F27379"), ui.Hex("#E8A93F")
+	}
 	switch {
-	case strings.HasPrefix(r.line, "❌"), strings.Contains(r.line, "::error"), strings.HasPrefix(r.line, "Error:"):
-		color = t.Danger
-	case strings.HasPrefix(r.line, "⚠"), strings.Contains(r.line, "::warning"):
-		color = t.Warning
+	case strings.HasPrefix(r.line, "❌"), strings.Contains(r.line, "::error"), strings.HasPrefix(strings.ToLower(r.line), "error:"):
+		color = errorColor
+	case strings.HasPrefix(r.line, "⚠"), strings.Contains(r.line, "::warning"), strings.HasPrefix(r.line, "tip:"):
+		color = warningColor
 	case r.step == nil:
 		color = t.TextMuted
 	}
@@ -469,19 +362,23 @@ func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	})
 }
 
-// rowRef is one row of the flat steps list: a step header (step set, no
-// line) or an output line (line set; step nil for job-level lines).
+// rowRef is a step header, output toolbar, or log line; key preserves identity
+// even for blank output lines.
 type rowRef struct {
-	step *act.Step
-	line string
-	key  any
+	step   *act.Step
+	line   string
+	key    any
+	output bool
 }
 
 type lineKey struct {
 	step *act.Step
 	idx  int
 }
-type orphanKey struct{ idx int }
+type (
+	orphanKey struct{ idx int }
+	outputKey struct{ step *act.Step }
+)
 
 // flatRows expands a job's items into the visible row list: each step's
 // header followed by its lines while open.
@@ -494,6 +391,9 @@ func flatRows(j *act.Job) []rowRef {
 		}
 		rows = append(rows, rowRef{step: it.Step, key: it.Step})
 		if it.Step.Open {
+			if len(it.Step.Lines) > 0 {
+				rows = append(rows, rowRef{step: it.Step, output: true, key: outputKey{it.Step}})
+			}
 			for li, l := range it.Step.Lines {
 				rows = append(rows, rowRef{step: it.Step, line: l, key: lineKey{it.Step, li}})
 			}
@@ -523,15 +423,6 @@ func statusIcon(c *ui.Context, st act.Status, size float32) {
 	default:
 		components.Icon(c, lucide.CircleDashed()).Size(s, s).TextColor(t.TextMuted)
 	}
-}
-
-// sectionTitle separates groups in the config form.
-func sectionTitle(c *ui.Context, text string) {
-	t := c.Theme()
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(t.Space(2)).Children(func() {
-		components.Text(c, text).FontSize(11).Bold().TextColor(t.TextMuted).SingleLine()
-		ui.Box(c).Grow(1).Height(1).Background(t.Border.Alpha(.65))
-	})
 }
 
 // field renders a labeled form field.
