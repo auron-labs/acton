@@ -29,6 +29,12 @@ type options struct {
 	newActionCache                                                   bool
 }
 
+// Validate checks settings against the pinned embedded act API without starting a run.
+func Validate(dir string, args []string) error {
+	_, err := parseOptions(dir, args)
+	return err
+}
+
 func parseOptions(dir string, args []string) (*options, error) {
 	o := &options{}
 	c := &o.config

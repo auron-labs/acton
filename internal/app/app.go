@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -59,6 +60,12 @@ type App struct {
 	jobW    float32 // jobs pane width
 	logUI   logUIState
 	rawLogs map[*act.Job]*rawLog
+
+	mcpServer *http.Server
+	runID     int
+	nextRunID int
+	runDir    string
+	history   []runSnapshot
 }
 
 // logUIState holds view-scoped widget state for the log pane.
@@ -90,7 +97,7 @@ func (a *App) rawLogFor(j *act.Job) *rawLog {
 // Run starts the desktop app: it builds the window's shell once mygo is
 // ready, wires the lifecycle, and blocks in the event loop until done. dir,
 // when set, preselects the project; runNow starts act immediately.
-func Run(dir string, runNow bool) error {
+func Run(dir string, runNow bool, mcpAddr string) error {
 	if err := registerFonts(); err != nil {
 		return err
 	}
@@ -108,6 +115,7 @@ func Run(dir string, runNow bool) error {
 	if dir != "" {
 		a.setDir(dir)
 	}
+	var startupErr error
 	mygo.App.WhenReady(func() {
 		shell := plain.NewShell(plain.ShellOptions{
 			Title:               "Acton",
@@ -127,6 +135,13 @@ func Run(dir string, runNow bool) error {
 			a.stopRun()
 			mygo.App.Quit()
 		})
+		if mcpAddr != "" {
+			if err := a.serveMCP(mcpAddr); err != nil {
+				startupErr = err
+				mygo.App.Quit()
+				return
+			}
+		}
 		if runNow {
 			a.startRun()
 		}
@@ -134,7 +149,7 @@ func Run(dir string, runNow bool) error {
 	if err := mygo.App.Run(); err != nil {
 		return fmt.Errorf("mygo run: %w", err)
 	}
-	return nil
+	return startupErr
 }
 
 func newApp() *App {
@@ -272,6 +287,10 @@ func (a *App) pickConfigFile(kind string) {
 
 // clearRun drops run state for a fresh directory or a manual clear.
 func (a *App) clearRun() {
+	if a.runID != 0 {
+		a.history = append(a.history, a.snapshot())
+		a.runID = 0
+	}
 	a.run.Reset()
 	a.runErr = ""
 	a.selJob = ""
@@ -282,7 +301,7 @@ func (a *App) clearRun() {
 
 // startRun launches act with the current settings.
 func (a *App) startRun() {
-	if a.running || a.settings.Dir == "" || a.win == nil {
+	if a.running || a.settings.Dir == "" {
 		return
 	}
 	args, err := a.settings.Args()
@@ -300,6 +319,8 @@ func (a *App) startRun() {
 	a.runner = r
 	a.running = true
 	a.started = time.Now()
+	a.nextRunID++
+	a.runID, a.runDir = a.nextRunID, a.settings.Dir
 }
 
 func (a *App) stopRun() {
@@ -311,6 +332,9 @@ func (a *App) stopRun() {
 // shutdown waits for act's post steps and resource cleanup before returning to main.
 func (a *App) shutdown() {
 	close(a.done)
+	if a.mcpServer != nil {
+		_ = a.mcpServer.Close()
+	}
 	if a.runner != nil {
 		a.runner.Stop()
 		a.runner.Wait()
@@ -424,6 +448,11 @@ func (a *App) cmdline() string {
 	if err != nil {
 		return "act"
 	}
+	redactArgs(args)
+	return "act " + shellquote.Join(args...)
+}
+
+func redactArgs(args []string) {
 	for i, w := range args {
 		// Keep secret values out of both command previews and clipboard copies.
 		switch {
@@ -438,7 +467,6 @@ func (a *App) cmdline() string {
 			args[i] = "-s" + name + "=••••••••"
 		}
 	}
-	return "act " + shellquote.Join(args...)
 }
 
 func contains(list []string, v string) bool {

@@ -1,7 +1,7 @@
 // Acton wraps nektos/act in a desktop window: project picker and settings
 // on the left, GitHub-Actions-style job output on the right.
 //
-// Usage: acton [--run] [project-dir]
+// Usage: acton [--run] [--mcp[=127.0.0.1:7337]] [project-dir]
 package main
 
 import (
@@ -14,10 +14,15 @@ import (
 
 func main() {
 	dir, runNow := "", false
+	mcpAddr := ""
 	for _, arg := range os.Args[1:] {
 		switch {
 		case arg == "--run" || arg == "-run":
 			runNow = true
+		case arg == "--mcp":
+			mcpAddr = "127.0.0.1:7337"
+		case strings.HasPrefix(arg, "--mcp="):
+			mcpAddr = strings.TrimPrefix(arg, "--mcp=")
 		case strings.HasPrefix(arg, "-"):
 			//nolint:gosec // G706: %q escapes control characters in the flag.
 			log.Printf("acton: ignoring unknown flag %q", arg)
@@ -27,7 +32,7 @@ func main() {
 			}
 		}
 	}
-	if err := app.Run(dir, runNow); err != nil {
+	if err := app.Run(dir, runNow, mcpAddr); err != nil {
 		log.Fatal(err)
 	}
 }
