@@ -3,7 +3,10 @@ package app
 import (
 	"actgui/internal/act"
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -159,5 +162,57 @@ func TestMinimumWindowPreservesLogSpace(t *testing.T) {
 	log, ok := tt.Find("Step go test")
 	if !ok || log.W < 260 {
 		t.Fatalf("log pane too narrow at minimum window size: %+v", log)
+	}
+}
+
+func TestShutdownStopsRunAndWaitsForCleanup(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	workflow := `name: CI
+on: push
+jobs:
+  wait:
+    runs-on: ubuntu-latest
+    steps:
+      - run: printf 'waiting\n'; exec sleep 60
+`
+	if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), []byte(workflow), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp()
+	a.runner = &act.Runner{}
+	logged := make(chan struct{}, 1)
+	if err := a.runner.Start(dir, []string{"push", "-P", "ubuntu-latest=-self-hosted", "--no-cache-server", "--action-cache-path", t.TempDir()}, func() {
+		lines, _, _ := a.runner.Drain()
+		for _, line := range lines {
+			if strings.Contains(line, `"raw_output":true`) && strings.Contains(line, "waiting") {
+				select {
+				case logged <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.runner.Stop(); a.runner.Wait() })
+	select {
+	case <-logged:
+	case <-time.After(15 * time.Second):
+		t.Fatal("workflow did not start")
+	}
+	// Shutdown owns the runner lifecycle even when the view's flag is stale.
+	a.running = false
+	a.shutdown()
+	_, done, err := a.runner.Drain()
+	if !done || !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown returned before cancellation and cleanup: done=%v, err=%v", done, err)
+	}
+	select {
+	case <-a.done:
+	default:
+		t.Fatal("shutdown did not close the application lifetime")
 	}
 }

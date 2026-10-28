@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -48,6 +50,7 @@ type App struct {
 	started time.Time
 
 	flushScheduled atomic.Bool
+	done           chan struct{}
 
 	selJob  string // "" auto-selects the first job
 	logMode int    // 0 steps, 1 raw log
@@ -92,10 +95,14 @@ func Run(dir string, runNow bool) error {
 		return err
 	}
 	a := newApp()
-	defer func() {
-		a.stopRun()
-		if a.runner != nil {
-			a.runner.Wait()
+	defer a.shutdown()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	go func() {
+		select {
+		case <-ctx.Done():
+			mygo.App.Quit()
+		case <-a.done:
 		}
 	}()
 	if dir != "" {
@@ -136,6 +143,7 @@ func newApp() *App {
 		eventSel: "push",
 		cfgW:     320,
 		jobW:     240,
+		done:     make(chan struct{}),
 	}
 	a.logUI.list.FollowEnd = true
 	a.logUI.runner.FollowEnd = true
@@ -297,6 +305,15 @@ func (a *App) startRun() {
 func (a *App) stopRun() {
 	if a.running && a.runner != nil {
 		a.runner.Stop()
+	}
+}
+
+// shutdown waits for act's post steps and resource cleanup before returning to main.
+func (a *App) shutdown() {
+	close(a.done)
+	if a.runner != nil {
+		a.runner.Stop()
+		a.runner.Wait()
 	}
 }
 
