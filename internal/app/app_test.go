@@ -74,7 +74,7 @@ func TestViewSmoke(t *testing.T) {
 		t.Fatalf("click raw log: %v", err)
 	}
 	tt.Frame()
-	raw := a.rawLogFor(a.run.Jobs[0]).buf.String()
+	raw := strings.Join(tt.Texts(), "\n")
 	for _, want := range []string{`"msg":"⭐ Run Set up job"`, `"stepResult":"success"`, `"jobResult":"success"`} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("raw log missing %q:\n%s", want, raw)
@@ -82,8 +82,8 @@ func TestViewSmoke(t *testing.T) {
 	}
 	feed(&a.run, `{"job":"CI/build","step":"cleanup","stepID":["cleanup"],"stage":"Post","msg":"⭐ Run Post cleanup"}`)
 	tt.Frame()
-	if !strings.Contains(a.rawLogFor(a.run.Jobs[0]).buf.String(), "Post cleanup") {
-		t.Fatalf("raw buffer did not append new lines")
+	if !strings.Contains(strings.Join(tt.Texts(), "\n"), "Post cleanup") {
+		t.Fatalf("raw view did not show new lines")
 	}
 }
 
@@ -185,8 +185,9 @@ func TestNoWorkflowsState(t *testing.T) {
 		c.SetTheme(designTheme(c))
 		a.headerActions(c)
 	}, 400, 64)
-	if err := ht.Click("Run workflow"); err != nil {
-		t.Fatalf("header Run missing: %v", err)
+	ht.Frame()
+	if ht.HasText("Run") {
+		t.Fatalf("header Run should be hidden without workflow files: %q", ht.Texts())
 	}
 	a.startRun()
 	if a.running || a.runner != nil {

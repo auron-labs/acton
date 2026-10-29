@@ -163,7 +163,17 @@ func jobTimeAxis(j *act.Job, now time.Time) timeAxis {
 			end = until
 		}
 	})
-	span := max(time.Second, end.Sub(start))
+	if !j.Started.IsZero() {
+		start = j.Started
+		end = j.Ended
+		if end.IsZero() {
+			end = now
+		}
+	}
+	span := end.Sub(start)
+	if start.IsZero() || span <= 0 {
+		span = time.Second
+	}
 	tick := time.Second
 	for _, candidate := range []time.Duration{time.Second / 5, time.Second / 2, time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 15 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute, 15 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour, 5 * time.Hour, 10 * time.Hour, 24 * time.Hour} {
 		tick = candidate
@@ -174,33 +184,13 @@ func jobTimeAxis(j *act.Job, now time.Time) timeAxis {
 	return timeAxis{start: start, span: span, tick: tick, now: now}
 }
 
-func axisLabel(d time.Duration) string {
-	if d > 0 && d%time.Second != 0 {
-		return act.FormatDuration(d)
-	}
-	seconds := int(d / time.Second)
-	if seconds < 60 {
-		return fmt.Sprintf("%ds", seconds)
-	}
-	if seconds%60 == 0 {
-		return fmt.Sprintf("%dm", seconds/60)
-	}
-	return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
-}
-
-func timelineColumns(c *ui.Context, axis timeAxis) {
+func timelineColumns(c *ui.Context) {
 	t := c.Theme()
 	ui.Row(c).FillWidth().Shrink(0).Height(28).Gap(8).Padding(0, 12).AlignItems(ui.Center).Children(func() {
 		components.Text(c, "#").Width(32).TextAlign(ui.End).Font("JetBrains Mono").FontSize(10).TextColor(t.TextMuted).Shrink(0)
 		ui.Box(c).Width(16).Shrink(0)
 		components.Text(c, "STEP").Grow(1).Basis(0).MinWidth(0).FontSize(10).TextColor(t.TextMuted)
-		ui.Box(c).Grow(1).Basis(0).MinWidth(0).Height(28).Clip().Draw(func(p *ui.Painter, r ui.Rect) {
-			for d := time.Duration(0); d <= axis.span; d += axis.tick {
-				x := r.X + r.W*float32(float64(d)/float64(axis.span))
-				label := axisLabel(d)
-				p.Text(max(r.X, min(x+3, r.X+r.W-float32(len(label))*6)), r.Y+7, label, 10, t.TextMuted)
-			}
-		})
+		components.Text(c, "SHARE OF JOB TIME").Grow(1).Basis(0).MinWidth(0).FontSize(10).TextColor(t.TextMuted).SingleLine()
 		components.Text(c, "DURATION").Width(64).TextAlign(ui.End).FontSize(10).TextColor(t.TextMuted).SingleLine().Shrink(0)
 		ui.Box(c).Width(14).Shrink(0)
 	})
@@ -270,26 +260,12 @@ func (a *App) stepHeaderRow(c *ui.Context, row rowRef, axis timeAxis) {
 				components.Icon(c, lucide.CloudDownload()).Size(13, 13).TextColor(t.TextMuted).Shrink(0)
 			}
 			if composite {
-				components.Badge(c, fmt.Sprintf("%d steps", len(s.Children))).Font("JetBrains Mono").FontSize(10).Shrink(0)
+				components.Badge(c, fmt.Sprintf("%d steps", len(s.Children))).Background(t.SurfaceHover).TextColor(t.TextMuted).Font("JetBrains Mono").FontSize(10).Shrink(0)
 			}
 		})
-		ui.Box(c).Grow(1).Basis(0).MinWidth(0).Height(30).Label("Timeline of " + s.Name).Draw(func(p *ui.Painter, r ui.Rect) {
-			for d := time.Duration(0); d <= axis.span; d += axis.tick {
-				x := r.X + r.W*float32(float64(d)/float64(axis.span))
-				p.Fill(ui.Rect{X: x, Y: r.Y, W: 1, H: r.H}, sectionBorder(c).Alpha(.5), 0)
-			}
-			if s.Started.IsZero() || axis.start.IsZero() || r.W <= 0 {
-				return
-			}
-			offset := float32(float64(s.Started.Sub(axis.start)) / float64(axis.span))
-			width := float32(float64(s.Elapsed(axis.now)) / float64(axis.span))
-			x := min(max(0, r.W-3), max(0, r.W*offset))
-			bar := ui.Rect{X: r.X + x, Y: r.Y + (r.H-6)/2, W: min(r.W-x, max(3, r.W*width)), H: 6}
-			if composite {
-				drawBracket(p, bar, t.Border)
-			} else {
-				p.Fill(bar, color, 3)
-			}
+		ui.Row(c).Grow(1).Basis(0).MinWidth(0).Height(30).Gap(4).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Grow(1).MinWidth(0).Height(30).Label("Share of job time for " + s.Name).Draw(func(p *ui.Painter, r ui.Rect) { drawShare(p, r, s, axis, t) })
+			components.Text(c, shareLabel(s.Elapsed(axis.now), axis.span)).FontSize(10).TextColor(t.TextMuted).Width(32).Shrink(0)
 		})
 		durationColor := t.TextMuted
 		if s.Status == act.StatusFailure || s.Status == act.StatusRunning || s.Status == act.StatusSuccess && s.Elapsed(axis.now) > slowStep {
@@ -304,10 +280,19 @@ func (a *App) stepHeaderRow(c *ui.Context, row rowRef, axis timeAxis) {
 	})
 }
 
-func stepOutputHeader(c *ui.Context, s *act.Step) {
+func stepOutputHeader(c *ui.Context, s *act.Step, tab *int) {
 	ui.Row(c).FillWidth().Height(34).Padding(0, 12).Gap(8).AlignItems(ui.Center).Children(func() {
-		components.Text(c, "OUTPUT").FontSize(10).TextColor(ui.Hex("#8C96A5")).Grow(1)
-		if components.Button(c, "Copy", components.ButtonGhost).Label("Copy output for " + s.Name).FontSize(11).TextColor(ui.Hex("#C6CFDA")).Clicked() {
+		if len(s.Annotations) > 0 {
+			ui.Segmented(c, tab, fmt.Sprintf("Problems %d", len(s.Annotations)), "Log").Label("Step output mode")
+		} else {
+			components.Text(c, "Log").FontSize(11).TextColor(ui.Hex("#C6CFDA"))
+		}
+		ui.Box(c).Grow(1)
+		copyColor := ui.Hex("#C6CFDA")
+		if len(s.Annotations) > 0 && *tab == 0 {
+			copyColor = c.Theme().TextMuted
+		}
+		if components.Button(c, "Copy", components.ButtonGhost).Label("Copy output for " + s.Name).FontSize(11).TextColor(copyColor).Clicked() {
 			c.WriteClipboard(strings.Join(s.Lines, "\n"))
 		}
 	})
@@ -324,18 +309,102 @@ func (a *App) stepOutput(c *ui.Context, row rowRef) {
 		a.logUI.output[s] = state
 	}
 	state.FollowEnd = s.Status == act.StatusRunning
-	if state.FollowEnd {
-		state.ScrollToEnd()
+	if a.logUI.tabs == nil {
+		a.logUI.tabs = map[*act.Step]*int{}
+	}
+	tab := a.logUI.tabs[s]
+	if tab == nil {
+		tab = new(int)
+		a.logUI.tabs[s] = tab
 	}
 	lines := 0
 	for _, line := range s.Lines {
 		lines += strings.Count(line, "\n") + 1
 	}
-	height := min(320, float32(lines)*18+42)
+	height := min(320, max(100, float32(max(lines, len(s.Annotations)*3))*18+42))
+	background := ui.Hex("#07090C")
+	if len(s.Annotations) > 0 && *tab == 0 {
+		background = panelBackground(c)
+	}
 	ui.Column(c).FillWidth().Padding(3, 12, 8, 76+float32(row.depth)*20).Children(func() {
-		ui.Column(c).FillWidth().Height(height).Shrink(0).Background(ui.Hex("#07090C")).Radius(6).Border(1, c.Theme().Border).Clip().Children(func() {
-			stepOutputHeader(c, s)
-			components.List(c, state, len(s.Lines), func(i int) { a.logLineRow(c, rowRef{step: s, line: s.Lines[i]}) }).Fill().MinHeight(0)
+		ui.Column(c).FillWidth().Height(height).Shrink(0).Background(background).Radius(6).Border(1, c.Theme().Border).Clip().Children(func() {
+			stepOutputHeader(c, s, tab)
+			if len(s.Annotations) > 0 && *tab == 0 {
+				components.ScrollView(c, components.ScrollViewOptions{}).Fill().MinHeight(0).Children(func() { annotationList(c, s.Annotations) })
+			} else {
+				components.List(c, state, len(s.Lines), func(i int) { a.logLineRow(c, rowRef{step: s, line: s.Lines[i]}) }).Fill().MinHeight(0)
+			}
 		})
 	})
+}
+
+func drawShare(p *ui.Painter, r ui.Rect, s *act.Step, axis timeAxis, t *ui.Theme) {
+	if r.W <= 0 || axis.span <= 0 {
+		return
+	}
+	x := r.X
+	var draw func(*act.Step)
+	draw = func(step *act.Step) {
+		if len(step.Children) > 0 {
+			for _, child := range step.Children {
+				draw(child)
+			}
+			return
+		}
+		d := step.Elapsed(axis.now)
+		if d <= 0 {
+			return
+		}
+		w := min(r.X+r.W-x, max(2, r.W*float32(float64(d)/float64(axis.span))))
+		if w <= 0 {
+			return
+		}
+		color := t.TextMuted
+		switch {
+		case step.Status == act.StatusFailure:
+			color = t.Danger
+		case step.Status == act.StatusRunning:
+			color = t.Accent
+		case d > slowStep:
+			color = t.Warning
+		case step.Status == act.StatusSuccess:
+			color = t.Success
+		}
+		p.Fill(ui.Rect{X: x, Y: r.Y + (r.H-6)/2, W: w, H: 6}, color, 2)
+		x += w + 1
+	}
+	draw(s)
+}
+
+func durationSummary(c *ui.Context, j *act.Job, axis timeAxis) {
+	t := c.Theme()
+	ui.Column(c).FillWidth().Shrink(0).Padding(12, 24).Gap(8).BorderWidth(0, 0, 1, 0).BorderColor(sectionBorder(c)).Children(func() {
+		ui.Row(c).FillWidth().Children(func() {
+			components.Text(c, "WHERE THE TIME WENT").FontSize(10).TextColor(t.TextMuted).Grow(1)
+			components.Text(c, act.FormatDuration(axis.span)+" total").FontSize(10).TextColor(t.TextMuted)
+		})
+		ui.Box(c).FillWidth().Height(14).Label("Job duration breakdown").Draw(func(p *ui.Painter, r ui.Rect) {
+			drawShare(p, r, &act.Step{Children: j.Steps}, axis, t)
+		})
+		var longest *act.Step
+		for _, s := range j.Steps {
+			if longest == nil || s.Elapsed(axis.now) > longest.Elapsed(axis.now) {
+				longest = s
+			}
+		}
+		if longest != nil && longest.Elapsed(axis.now) > 0 {
+			components.Text(c, longest.Name+" · "+act.FormatDuration(longest.Elapsed(axis.now))+" · "+shareLabel(longest.Elapsed(axis.now), axis.span)).FontSize(11).TextColor(t.TextMuted).SingleLine().Ellipsis("…")
+		}
+	})
+}
+
+func shareLabel(d, total time.Duration) string {
+	if d <= 0 || total <= 0 {
+		return "0%"
+	}
+	pct := float64(d) * 100 / float64(total)
+	if pct < 1 {
+		return "<1%"
+	}
+	return fmt.Sprintf("%.0f%%", pct)
 }

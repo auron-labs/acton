@@ -61,3 +61,26 @@ func TestRecentListOnFirstScreen(t *testing.T) {
 		t.Fatalf("Dir = %q, want %q", a.settings.Dir, dir)
 	}
 }
+
+func TestRunButtonHiddenUnlessRunnable(t *testing.T) {
+	a := newApp()
+	frame := func() *ui.Tester {
+		tt := ui.NewTester(func(c *ui.Context) {
+			c.SetTheme(designTheme(c))
+			a.headerActions(c)
+		}, 1120, 720)
+		tt.Frame()
+		return tt
+	}
+	if frame().HasText("Run") {
+		t.Fatal("Run shown without a project")
+	}
+	a.settings.Dir = "/tmp/proj"
+	if frame().HasText("Run") {
+		t.Fatal("Run shown without workflows")
+	}
+	a.workflows = []string{".github/workflows/ci.yml"}
+	if !frame().HasText("Run") {
+		t.Fatal("Run hidden for a runnable project")
+	}
+}

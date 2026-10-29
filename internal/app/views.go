@@ -87,7 +87,10 @@ func (a *App) headerActions(c *ui.Context) {
 				statusIcon(c, st, 4.5)
 				components.Text(c, act.FormatDuration(a.elapsed)).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
 			}
-			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow").Disabled(a.settings.Dir == "" || len(a.workflows) == 0)
+			if a.settings.Dir == "" || len(a.workflows) == 0 {
+				return
+			}
+			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow")
 			run.Children(func() {
 				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
 					components.Icon(c, lucide.Play()).Size(t.Space(3.5), t.Space(3.5))
@@ -117,7 +120,9 @@ func (a *App) runView(c *ui.Context) {
 		return
 	}
 	components.Split(c, &a.jobW, func() { a.jobsPane(c) }, func() {
-		if a.selJob == act.RunnerJobKey || (a.selJob == "" && a.selectedJob() == nil && len(a.run.Runner) > 0) {
+		if a.selJob == overviewJobKey {
+			a.overviewPane(c)
+		} else if a.selJob == act.RunnerJobKey || (a.selJob == "" && a.selectedJob() == nil && len(a.run.Runner) > 0) {
 			a.runnerPane(c)
 		} else if j := a.selectedJob(); j != nil {
 			a.logPane(c, j)
@@ -179,9 +184,9 @@ func (a *App) recentList(c *ui.Context) {
 	}
 	t := c.Theme()
 	ui.Column(c).FillWidth().MaxWidth(420).Gap(t.Space(0.5)).Margin(t.Space(3), 0, 0, 0).Children(func() {
-		components.Text(c, "Recent projects").FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted).SingleLine().Padding(0, t.Space(2), t.Space(1), t.Space(2))
+		components.Text(c, "Recent projects").FontSize(t.Rem(12.0/13)).TextColor(t.TextMuted).SingleLine().Padding(0, t.Space(2), t.Space(1), t.Space(2))
 		for _, dir := range dirs {
-			row := ui.Row(c.Key("recent:" + dir)).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
+			row := ui.Row(c.Key("recent:"+dir)).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
 			if row.Hovered() {
 				row.Background(t.Text.Alpha(.04))
 			}
@@ -256,9 +261,10 @@ func (a *App) jobsPane(c *ui.Context) {
 				if j := a.selectedJob(); j != nil {
 					selected = j.Key
 				}
-				if a.selJob == act.RunnerJobKey {
-					selected = act.RunnerJobKey
+				if a.selJob == act.RunnerJobKey || a.selJob == overviewJobKey {
+					selected = a.selJob
 				}
+				a.overviewRow(c, selected == overviewJobKey)
 				for _, j := range a.run.Jobs {
 					a.jobRow(c, j, j.Key == selected)
 				}
@@ -329,7 +335,8 @@ func (a *App) logPane(c *ui.Context, j *act.Job) {
 		} else {
 			a.stepSummary(c, j)
 			axis := jobTimeAxis(j, time.Now())
-			timelineColumns(c, axis)
+			durationSummary(c, j, axis)
+			timelineColumns(c)
 			a.stepsView(c, j, axis)
 		}
 	})
@@ -365,26 +372,17 @@ func (a *App) stepsView(c *ui.Context, j *act.Job, axis timeAxis) {
 	}).Fill()
 }
 
-// rawLogView appends new verbatim lines into a persistent buffer so the read
-// only view keeps its scroll position.
+// rawLogView uses the original records directly and retains its scroll state.
 func (a *App) rawLogView(c *ui.Context, j *act.Job) {
 	rl := a.rawLogFor(j)
-	if len(j.Raw) > rl.n {
-		var b strings.Builder
-		for _, l := range j.Raw[rl.n:] {
-			b.WriteString(l)
-			b.WriteByte('\n')
-		}
-		rl.buf.Replace(rl.buf.Len(), rl.buf.Len(), b.String())
-		rl.n = len(j.Raw)
-	}
-	components.TextBoxBuffer(c, rl.buf, components.TextBoxOptions{Multiline: true, ReadOnly: true}).
-		Fill().Font("JetBrains Mono").FontSize(12).Label("Raw act output")
+	rl.list.FollowEnd = true
+	components.List(c, &rl.list, len(j.Raw), func(i int) { a.logLineRow(c, rowRef{line: j.Raw[i]}) }).Fill().Label("Raw act output")
 }
 
 // linesView renders a plain list of lines (runner output).
 func (a *App) linesView(c *ui.Context, lines []string) {
 	t := c.Theme()
+	a.logUI.runner.FollowEnd = true
 	components.List(c, &a.logUI.runner, len(lines), func(i int) {
 		ui.Row(c).FillWidth().Padding(0, t.Space(3), 0, 0).Children(func() {
 			ui.Text(c, lines[i]).Font("JetBrains Mono").FontSize(12).Selectable()
@@ -448,7 +446,7 @@ func flatRows(j *act.Job, filter stepFilter) []rowRef {
 			for i, child := range s.Children {
 				add(child, fmt.Sprintf("%s.%d", number, i+1), depth+1)
 			}
-			if s.Open && len(s.Lines) > 0 {
+			if s.Open && (len(s.Lines) > 0 || len(s.Annotations) > 0) {
 				row.output = true
 				row.key = outputKey{s}
 				rows = append(rows, row)

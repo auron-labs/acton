@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 	"github.com/kballard/go-shellquote"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/shells/plain"
@@ -77,23 +76,22 @@ type logUIState struct {
 	runner components.ListState
 	filter stepFilter
 	output map[*act.Step]*components.ListState
+	tabs   map[*act.Step]*int
 }
 
-// rawLog is the view-side raw log buffer of one job, appended lazily so the
-// read-only view keeps its scroll position.
+// rawLog keeps a job's raw-output scroll position across frames.
 type rawLog struct {
-	buf *ui.TextBuffer
-	n   int
+	list components.ListState
 }
 
-// rawLogFor returns the job's raw log buffer, creating it on first use.
+// rawLogFor returns the job's persistent raw-output view state.
 func (a *App) rawLogFor(j *act.Job) *rawLog {
 	if a.rawLogs == nil {
 		a.rawLogs = map[*act.Job]*rawLog{}
 	}
 	rl := a.rawLogs[j]
 	if rl == nil {
-		rl = &rawLog{buf: ui.NewTextBuffer("")}
+		rl = &rawLog{}
 		a.rawLogs[j] = rl
 	}
 	return rl
@@ -314,6 +312,7 @@ func (a *App) clearRun() {
 	a.rawLogs = nil
 	a.logUI.filter = filterAll
 	a.logUI.output = nil
+	a.logUI.tabs = nil
 }
 
 // startRun launches act with the current settings.
