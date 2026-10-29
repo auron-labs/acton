@@ -25,7 +25,7 @@ func TestMCPDesktopControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newApp()
-	a.settings.Dir = dir
+	a.setDir(dir)
 	a.settings.Secrets = []string{"TOKEN=private-fixture"}
 	a.settings.ExtraArgs = "--secret=INLINE=extra-fixture"
 	queue := make(chan func(), 16)
@@ -131,6 +131,29 @@ func TestMCPRejectsCrossOriginRequests(t *testing.T) {
 		if err := a.serveMCP(addr); err == nil {
 			t.Fatalf("accepted public or invalid address %q", addr)
 		}
+	}
+}
+
+func TestMCPRejectsRunWithoutWorkflows(t *testing.T) {
+	a := newApp()
+	a.setDir(t.TempDir())
+	server := httptest.NewServer(a.mcpHandler(func(action func()) { action() }))
+	t.Cleanup(server.Close)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_run", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || len(result.Content) == 0 || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "no GitHub Actions workflow files") {
+		t.Fatalf("expected missing-workflow error: %+v", result)
+	}
+	if a.runner != nil || a.running {
+		t.Fatal("MCP started a run without workflow files")
 	}
 }
 

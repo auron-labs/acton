@@ -14,6 +14,7 @@ import (
 func TestTimelineFailureNavigation(t *testing.T) {
 	a := newApp()
 	a.settings.Dir = "/tmp/project"
+	a.workflows = []string{".github/workflows/ci.yml"}
 	j := &act.Job{Key: "CI/test", Name: "test", Status: act.StatusFailure}
 	for i := range 40 {
 		s := &act.Step{Name: fmt.Sprintf("Step %d", i), Status: act.StatusSuccess, Dur: time.Second}
@@ -83,6 +84,7 @@ func TestCommandPreviewRedactsAndQuotes(t *testing.T) {
 func TestTimelineCompositeFilters(t *testing.T) {
 	a := newApp()
 	a.settings.Dir = "/tmp/project"
+	a.workflows = []string{".github/workflows/ci.yml"}
 	start := time.Now().Add(-2 * time.Minute)
 	parent := &act.Step{Name: "setup", Source: "./.github/actions/setup", Status: act.StatusFailure, Started: start, Ended: start.Add(80 * time.Second), Open: true}
 	for i, child := range []*act.Step{

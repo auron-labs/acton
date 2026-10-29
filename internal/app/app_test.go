@@ -24,6 +24,7 @@ func feed(r *act.Run, lines ...string) {
 func TestViewSmoke(t *testing.T) {
 	a := newApp()
 	a.settings.Dir = "/tmp/proj"
+	a.workflows = []string{".github/workflows/ci.yml"}
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
 		a.view(c)
@@ -98,7 +99,9 @@ func TestProjectSelectionAndConfiguration(t *testing.T) {
 	if !tt.HasText("Select a project") || !tt.HasText("Choose project…") || tt.HasText("Workflow") {
 		t.Fatalf("expected project picker without settings: %q", tt.Texts())
 	}
-	a.setDir(t.TempDir())
+	dir := t.TempDir()
+	writeWorkflow(t, dir)
+	a.setDir(dir)
 	tt.Frame()
 	if tt.HasText("Select a project") || !tt.HasText("Workflow") || !tt.HasText("Nothing has run yet") {
 		t.Fatalf("expected configured project: %q", tt.Texts())
@@ -145,6 +148,86 @@ func TestProjectSelectionAndConfiguration(t *testing.T) {
 	}
 }
 
+// writeWorkflow creates a minimal .github/workflows file in dir.
+func writeWorkflow(t *testing.T, dir string) {
+	t.Helper()
+	wfDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	workflow := "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "ci.yml"), []byte(workflow), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestNoWorkflowsState covers the dedicated empty state: it replaces the
+// panes, blocks runs, and its Check again rescan reaches the configured
+// state without resetting settings.
+func TestNoWorkflowsState(t *testing.T) {
+	a := newApp()
+	a.setDir(t.TempDir())
+	a.settings.Job = "build"
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(designTheme(c))
+		a.view(c)
+	}, 1120, 720)
+	for _, want := range []string{"No GitHub Actions found", ".github/workflows", "Check again", "Choose another project…"} {
+		if !tt.HasText(want) {
+			t.Fatalf("empty state missing %q: %q", want, tt.Texts())
+		}
+	}
+	if tt.HasText("Nothing has run yet") || tt.HasText("Workflow") {
+		t.Fatalf("no-workflow state should replace the config and run panes: %q", tt.Texts())
+	}
+	// Run is unavailable without workflow files, however it is invoked.
+	ht := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(designTheme(c))
+		a.headerActions(c)
+	}, 400, 64)
+	if err := ht.Click("Run workflow"); err != nil {
+		t.Fatalf("header Run missing: %v", err)
+	}
+	a.startRun()
+	if a.running || a.runner != nil {
+		t.Fatal("run started without workflow files")
+	}
+	if err := tt.Click("Check again"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("No GitHub Actions found") || a.settings.Job != "build" {
+		t.Fatal("empty rescan changed the state or reset settings")
+	}
+
+	// Check again picks up newly added workflow files while keeping settings.
+	writeWorkflow(t, a.settings.Dir)
+	if err := tt.Click("Check again"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("Workflow") || !tt.HasText("Nothing has run yet") || tt.HasText("No GitHub Actions found") {
+		t.Fatalf("rescan did not reach the configured state: %q", tt.Texts())
+	}
+	if a.settings.Job != "build" || len(a.workflows) != 1 {
+		t.Fatalf("rescan lost settings or workflows: %q, %q", a.settings.Job, a.workflows)
+	}
+}
+
+func TestRescanPreservesExplicitWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkflow(t, dir)
+	if err := os.Rename(filepath.Join(dir, ".github", "workflows", "ci.yml"), filepath.Join(dir, "custom.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp()
+	a.setDir(dir)
+	a.settings.Workflow = "custom.yaml"
+	a.rescanWorkflows()
+	if len(a.workflows) != 1 || a.workflows[0] != "custom.yaml" || a.settings.Workflow != "custom.yaml" || a.workflowErr != "" || !contains(a.workflowJobs, "build") {
+		t.Fatalf("explicit workflow lost on rescan: workflows=%q selection=%q jobs=%q error=%q", a.workflows, a.settings.Workflow, a.workflowJobs, a.workflowErr)
+	}
+}
+
 func TestFriendlyExitCancellation(t *testing.T) {
 	if got := friendlyExit(fmt.Errorf("workflow: %w", context.Canceled)); got != "stopped" {
 		t.Fatalf("cancellation: %q", got)
@@ -154,6 +237,7 @@ func TestFriendlyExitCancellation(t *testing.T) {
 func TestMinimumWindowPreservesLogSpace(t *testing.T) {
 	a := newApp()
 	a.settings.Dir = "/tmp/proj"
+	a.workflows = []string{".github/workflows/ci.yml"}
 	feed(&a.run, `{"job":"CI/build","step":"go test","stepID":["test"],"stage":"Main","msg":"⭐ Run Main go test"}`)
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))

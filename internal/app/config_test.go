@@ -51,6 +51,12 @@ func TestSidebarEditors(t *testing.T) {
 	if !slices.Equal(a.settings.Platforms, []string{"second="}) {
 		t.Fatalf("wrong mapping removed: %q", a.settings.Platforms)
 	}
+	// The surviving row must not inherit the removed row's edits.
+	edit("Runner label 1", "second-runner")
+	edit("Container image 1", "ubuntu:22.04")
+	if !slices.Equal(a.settings.Platforms, []string{"second-runner=ubuntu:22.04"}) {
+		t.Fatalf("mapping edit after removal corrupted values: %q", a.settings.Platforms)
+	}
 	click("Images & platforms")
 	click("Environment")
 	if tt.HasText("original=value") || strings.Contains(a.cmdline(), "original=value") {

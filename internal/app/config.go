@@ -154,27 +154,11 @@ func (a *App) targetView(c *ui.Context) {
 
 func (a *App) imagesView(c *ui.Context) {
 	t := c.Theme()
-	for i := range a.settings.Platforms {
-		ui.Column(c.Key(i)).FillWidth().Gap(t.Space(1)).Padding(t.Space(2), t.Space(2.5)).Radius(t.Radius).Border(1, sectionBorder(c)).Background(inputBackground(c)).Children(func() {
-			runner, image, _ := strings.Cut(a.settings.Platforms[i], "=")
-			ui.Row(c).FillWidth().Gap(t.Space(1)).Children(func() {
-				input := components.TextBox(c, &runner, components.TextBoxOptions{}).Placeholder("ubuntu-latest").Label(fmt.Sprintf("Runner label %d", i+1)).Grow(1).MinWidth(0)
-				styleConfigInput(c, input)
-				if input.Changed() {
-					a.settings.Platforms[i] = runner + "=" + image
-				}
-				remove := components.Button(c, "", components.ButtonGhost).Label(fmt.Sprintf("Remove mapping %d", i+1)).Size(t.Space(6), t.Space(7)).Padding(0).Shrink(0)
-				remove.Children(func() { components.Icon(c, lucide.X()).Size(t.Space(3), t.Space(3)) })
-				remove.OnClick(func() { a.settings.Platforms = slices.Delete(a.settings.Platforms, i, i+1) })
-			})
-			ui.Row(c).FillWidth().Gap(t.Space(1.25)).AlignItems(ui.Center).Children(func() {
-				components.Icon(c, lucide.CornerDownRight()).Size(t.Space(2.75), t.Space(2.75)).TextColor(t.TextMuted).Shrink(0)
-				input := components.TextBox(c, &image, components.TextBoxOptions{}).Placeholder("catthehacker/ubuntu:act-latest").Label(fmt.Sprintf("Container image %d", i+1)).Grow(1).MinWidth(0)
-				styleConfigInput(c, input)
-				if input.Changed() {
-					a.settings.Platforms[i] = runner + "=" + image
-				}
-			})
+	if len(a.settings.Platforms) > 0 {
+		ui.Column(c).FillWidth().Radius(t.Radius).Border(1, sectionBorder(c)).Background(inputBackground(c)).Dividers(1, sectionBorder(c)).Children(func() {
+			for i := range a.settings.Platforms {
+				a.mappingRow(c, i)
+			}
 		})
 	}
 	if components.Button(c, "+ Add mapping", components.ButtonGhost).TextColor(t.Accent).Clicked() {
@@ -191,6 +175,34 @@ func (a *App) imagesView(c *ui.Context) {
 		if segments.Changed() {
 			a.settings.Arch = values[selected]
 		}
+	})
+}
+
+// mappingRow is one runner=image pair inside the shared mappings group: the
+// runner label on the first line, the container image behind a branch arrow
+// on the second. Both stay plain editable text.
+func (a *App) mappingRow(c *ui.Context, i int) {
+	t := c.Theme()
+	runner, image, _ := strings.Cut(a.settings.Platforms[i], "=")
+	ui.Column(c.Key(i)).FillWidth().Gap(t.Space(0.75)).Padding(t.Space(2), t.Space(2.5)).Children(func() {
+		ui.Row(c).FillWidth().Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
+			input := ui.TextInputBase(c, &runner).Grow(1).MinWidth(0).Placeholder("ubuntu-latest").Label(fmt.Sprintf("Runner label %d", i+1))
+			input.Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(t.Text)
+			if input.Changed() {
+				a.settings.Platforms[i] = runner + "=" + image
+			}
+			remove := components.Button(c, "", components.ButtonGhost).Label(fmt.Sprintf("Remove mapping %d", i+1)).Size(t.Space(4), t.Space(4)).Padding(0).Shrink(0)
+			remove.Children(func() { components.Icon(c, lucide.X()).Size(t.Space(2.75), t.Space(2.75)).TextColor(t.TextMuted) })
+			remove.OnClick(func() { a.settings.Platforms = slices.Delete(a.settings.Platforms, i, i+1) })
+		})
+		ui.Row(c).FillWidth().Gap(t.Space(1.25)).AlignItems(ui.Center).Children(func() {
+			components.Icon(c, lucide.CornerDownRight()).Size(t.Space(2.75), t.Space(2.75)).TextColor(t.TextMuted.Alpha(0.7)).Shrink(0)
+			input := ui.TextInputBase(c, &image).Grow(1).MinWidth(0).Placeholder("catthehacker/ubuntu:act-latest").Label(fmt.Sprintf("Container image %d", i+1))
+			input.Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(t.TextMuted)
+			if input.Changed() {
+				a.settings.Platforms[i] = runner + "=" + image
+			}
+		})
 	})
 }
 

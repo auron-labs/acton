@@ -28,6 +28,10 @@ func (a *App) view(c *ui.Context) {
 				a.emptyRunView(c)
 				return
 			}
+			if len(a.workflows) == 0 {
+				a.noWorkflowsView(c)
+				return
+			}
 			components.Split(c, &a.cfgW, func() { a.configView(c) }, func() { a.runView(c) },
 				components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 320}).Fill()
 		})
@@ -83,7 +87,7 @@ func (a *App) headerActions(c *ui.Context) {
 				statusIcon(c, st, 4.5)
 				components.Text(c, act.FormatDuration(a.elapsed)).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
 			}
-			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow").Disabled(a.settings.Dir == "")
+			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow").Disabled(a.settings.Dir == "" || len(a.workflows) == 0)
 			run.Children(func() {
 				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
 					components.Icon(c, lucide.Play()).Size(t.Space(3.5), t.Space(3.5))
@@ -142,9 +146,6 @@ func (a *App) emptyRunView(c *ui.Context) {
 			return
 		}
 		components.Icon(c, lucide.SquareTerminal()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
-		if len(a.workflows) == 0 {
-			components.Text(c, "No .github/workflows found in this folder — act may fail").TextColor(t.Warning).FontSize(12)
-		}
 		if a.running {
 			components.Spinner(c, components.SpinnerSpokes)
 			components.Text(c, "Starting act…").TextColor(t.TextMuted)
@@ -165,6 +166,41 @@ func (a *App) emptyRunView(c *ui.Context) {
 				a.startRun()
 			}
 		}
+	})
+}
+
+// noWorkflowsView is the dedicated full-content state for a project without
+// GitHub Actions: the project picker stays in the header while the content
+// explains the gap and offers a rescan or a different folder.
+func (a *App) noWorkflowsView(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Fill().Center().Gap(t.Space(4)).Padding(t.Space(6)).Children(func() {
+		components.Icon(c, lucide.Workflow()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
+		components.Text(c, "No GitHub Actions found").FontSize(t.Rem(22.0 / 13)).Bold()
+		components.Text(c, "This project has no workflow files in .github/workflows.\nAdd a GitHub Actions workflow, then check again.").
+			TextColor(t.TextMuted).FillWidth().MaxWidth(560).TextAlign(ui.Center)
+		ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
+			check := components.Button(c, "", components.ButtonPrimary).Label("Check for workflow files again")
+			check.Children(func() {
+				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
+					components.Icon(c, lucide.RefreshCw()).Size(t.Space(3.5), t.Space(3.5))
+					components.Text(c, "Check again").SingleLine()
+				})
+			})
+			if check.Clicked() {
+				a.rescanWorkflows()
+			}
+			choose := components.Button(c, "", components.ButtonSecondary).Label("Choose another project")
+			choose.Children(func() {
+				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
+					components.Icon(c, lucide.FolderOpen()).Size(t.Space(3.5), t.Space(3.5))
+					components.Text(c, "Choose another project…").SingleLine()
+				})
+			})
+			if choose.Clicked() {
+				a.pickFolder()
+			}
+		})
 	})
 }
 

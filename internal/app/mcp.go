@@ -115,6 +115,9 @@ func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 				if a.running || a.settings.Dir == "" {
 					return nil, errors.New("choose a project and wait for any active run to finish")
 				}
+				if len(a.workflows) == 0 {
+					return nil, errors.New("no GitHub Actions workflow files found in this project")
+				}
 				a.startRun()
 				if !a.running {
 					return nil, errors.New(a.runErr)
@@ -218,16 +221,12 @@ func (a *App) updateSettings(patch map[string]json.RawMessage) error {
 		a.clearRun()
 	}
 	a.settings = candidate
-	a.workflows = settings.ScanWorkflows(candidate.Dir)
-	if candidate.Workflow != "" && !contains(a.workflows, candidate.Workflow) {
-		a.workflows = append(a.workflows, candidate.Workflow)
-	}
 	a.eventSel, a.eventOther = candidate.Event, candidate.Event
 	if !contains(workflowEvents, a.eventSel) {
 		a.eventSel = "custom"
 	}
 	a.fileErr = ""
-	a.loadWorkflow()
+	a.rescanWorkflows()
 	return nil
 }
 

@@ -195,18 +195,14 @@ func (a *App) setDir(dir string) {
 	a.settings = *settings.Default(dir)
 	a.settings.ExtraArgs = keep
 	a.settings.LoadActrc()
-	a.workflows = settings.ScanWorkflows(dir)
 	a.clearRun()
-	if a.settings.Workflow != "" && !contains(a.workflows, a.settings.Workflow) {
-		a.workflows = append(a.workflows, a.settings.Workflow)
-	}
 	a.eventSel = a.settings.Event
 	a.eventOther = a.settings.Event
 	if !contains(workflowEvents, a.eventSel) {
 		a.eventSel = "custom"
 	}
 	a.fileErr = ""
-	a.loadWorkflow()
+	a.rescanWorkflows()
 }
 
 // loadWorkflow refreshes the selector metadata only when the target changes.
@@ -257,6 +253,17 @@ func (a *App) loadWorkflow() {
 	}
 }
 
+// rescanWorkflows looks for workflow files in the current project again,
+// keeping the configured settings; an explicit workflow selection stays
+// selectable just like in setDir.
+func (a *App) rescanWorkflows() {
+	a.workflows = settings.ScanWorkflows(a.settings.Dir)
+	if a.settings.Workflow != "" && !contains(a.workflows, a.settings.Workflow) {
+		a.workflows = append(a.workflows, a.settings.Workflow)
+	}
+	a.loadWorkflow()
+}
+
 // pickConfigFile binds the chosen path to act's existing file flags.
 func (a *App) pickConfigFile(kind string) {
 	if a.win == nil {
@@ -305,7 +312,7 @@ func (a *App) clearRun() {
 
 // startRun launches act with the current settings.
 func (a *App) startRun() {
-	if a.running || a.settings.Dir == "" {
+	if a.running || a.settings.Dir == "" || len(a.workflows) == 0 {
 		return
 	}
 	args, err := a.settings.Args()
