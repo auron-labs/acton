@@ -4405,7 +4405,8 @@
                   "enabled": false
                 },
                 "sklbG": {
-                  "opacity": 0.45
+                  "opacity": 0.45,
+                  "enabled": false
                 }
               }
             },
@@ -5398,7 +5399,8 @@
                   "enabled": false
                 },
                 "sklbG": {
-                  "opacity": 0.45
+                  "opacity": 0.45,
+                  "enabled": false
                 }
               }
             },
@@ -5475,6 +5477,220 @@
                               "content": "Choose project..."
                             }
                           }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "uqxxL",
+                          "name": "Recent projects",
+                          "width": 360,
+                          "layout": "vertical",
+                          "gap": 2,
+                          "padding": [
+                            16,
+                            0,
+                            0,
+                            0
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Y7IV9",
+                              "name": "Recent projects heading",
+                              "padding": [
+                                0,
+                                8,
+                                6,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "sVzR6",
+                                  "name": "Heading label",
+                                  "fill": "$--muted-foreground",
+                                  "content": "Recent projects",
+                                  "fontFamily": "$--font-primary",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "IngOV",
+                              "name": "Recent project ~/Code/acton",
+                              "width": "fill_container",
+                              "cornerRadius": "$--radius-m",
+                              "gap": 8,
+                              "padding": [
+                                7,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "al7h9",
+                                  "name": "Folder icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "gJbST",
+                                  "name": "Project path",
+                                  "fill": "$--foreground",
+                                  "content": "~/Code/acton",
+                                  "fontFamily": "$--font-primary",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "w6iy4T",
+                              "name": "Recent project ~/Code/TIDE-BDM",
+                              "width": "fill_container",
+                              "cornerRadius": "$--radius-m",
+                              "gap": 8,
+                              "padding": [
+                                7,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "Sp20U",
+                                  "name": "Folder icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "LqS4b",
+                                  "name": "Project path",
+                                  "fill": "$--foreground",
+                                  "content": "~/Code/TIDE-BDM",
+                                  "fontFamily": "$--font-primary",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "gtoSH",
+                              "name": "Recent project ~/Code/dotfiles",
+                              "width": "fill_container",
+                              "cornerRadius": "$--radius-m",
+                              "gap": 8,
+                              "padding": [
+                                7,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "Ik9Am",
+                                  "name": "Folder icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "N1eV98",
+                                  "name": "Project path",
+                                  "fill": "$--foreground",
+                                  "content": "~/Code/dotfiles",
+                                  "fontFamily": "$--font-primary",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "B56MR",
+                              "name": "Recent project ~/Work/api-gateway",
+                              "width": "fill_container",
+                              "cornerRadius": "$--radius-m",
+                              "gap": 8,
+                              "padding": [
+                                7,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "A1Avlk",
+                                  "name": "Folder icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "rXkZX",
+                                  "name": "Project path",
+                                  "fill": "$--foreground",
+                                  "content": "~/Work/api-gateway",
+                                  "fontFamily": "$--font-primary",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "u5KtOO",
+                              "name": "Recent project ~/Code/website",
+                              "width": "fill_container",
+                              "cornerRadius": "$--radius-m",
+                              "gap": 8,
+                              "padding": [
+                                7,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "KxkDr",
+                                  "name": "Folder icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "u5vrD",
+                                  "name": "Project path",
+                                  "fill": "$--foreground",
+                                  "content": "~/Code/website",
+                                  "fontFamily": "$--font-primary",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
                         }
                       ]
                     }
@@ -5536,7 +5752,8 @@
                   "enabled": false
                 },
                 "sklbG": {
-                  "opacity": 0.45
+                  "opacity": 0.45,
+                  "enabled": false
                 }
               }
             },
@@ -5591,238 +5808,6 @@
                         },
                         "sv39E/XyosS": {
                           "content": "Choose another project…"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "type": "frame",
-      "id": "vCfm5",
-      "x": 4994,
-      "y": 4055,
-      "name": "Act GUI — act not detected",
-      "theme": {
-        "mode": "dark"
-      },
-      "clip": true,
-      "width": 2337,
-      "height": 1211,
-      "fill": "$--background",
-      "layout": "vertical",
-      "padding": [
-        38,
-        56,
-        74,
-        56
-      ],
-      "children": [
-        {
-          "type": "frame",
-          "id": "Xpzqb",
-          "name": "Application window",
-          "clip": true,
-          "width": "fill_container",
-          "height": "fill_container",
-          "fill": "$--surface",
-          "cornerRadius": "$--radius-l",
-          "stroke": "$--border",
-          "strokeWidth": 1,
-          "strokeAlignment": "inner",
-          "layout": "vertical",
-          "children": [
-            {
-              "id": "G2Sot",
-              "type": "ref",
-              "ref": "s5tcw",
-              "name": "Application title bar",
-              "width": "fill_container",
-              "height": 48,
-              "descendants": {
-                "n7ZGOM/XyosS": {
-                  "content": "Choose project..."
-                },
-                "tkJJA": {
-                  "enabled": false
-                },
-                "sklbG": {
-                  "opacity": 0.45
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "XGi55",
-              "name": "Application content",
-              "width": "fill_container",
-              "height": "fill_container",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "gH1ax",
-                  "name": "Workflow output area",
-                  "width": "fill_container",
-                  "height": "fill_container",
-                  "fill": "$--background",
-                  "layout": "vertical",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "id": "Xbj36",
-                      "type": "ref",
-                      "ref": "j9NDa7",
-                      "name": "Act not detected empty state",
-                      "descendants": {
-                        "Hlp4j": {
-                          "icon": "terminal",
-                          "fill": "$--color-warning-foreground"
-                        },
-                        "La30W": {
-                          "content": "act wasn’t detected"
-                        },
-                        "hTPbf": {
-                          "content": "Act GUI couldn’t find act on your PATH.\nInstall act, or make it available on your PATH, then check again."
-                        },
-                        "E6ChYR": {
-                          "name": "Open act installation instructions"
-                        },
-                        "E6ChYR/AsNqs": {
-                          "icon": "external-link"
-                        },
-                        "E6ChYR/LEKF7": {
-                          "content": "Install act"
-                        },
-                        "sv39E": {
-                          "name": "Check act availability again"
-                        },
-                        "sv39E/fhFeQ": {
-                          "icon": "refresh-cw"
-                        },
-                        "sv39E/XyosS": {
-                          "content": "Check again"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "type": "frame",
-      "id": "lBl0p",
-      "x": 7491,
-      "y": 4055,
-      "name": "Act GUI — act update required",
-      "theme": {
-        "mode": "dark"
-      },
-      "clip": true,
-      "width": 2337,
-      "height": 1211,
-      "fill": "$--background",
-      "layout": "vertical",
-      "padding": [
-        38,
-        56,
-        74,
-        56
-      ],
-      "children": [
-        {
-          "type": "frame",
-          "id": "ecDo9",
-          "name": "Application window",
-          "clip": true,
-          "width": "fill_container",
-          "height": "fill_container",
-          "fill": "$--surface",
-          "cornerRadius": "$--radius-l",
-          "stroke": "$--border",
-          "strokeWidth": 1,
-          "strokeAlignment": "inner",
-          "layout": "vertical",
-          "children": [
-            {
-              "id": "XUwqD",
-              "type": "ref",
-              "ref": "s5tcw",
-              "name": "Application title bar",
-              "width": "fill_container",
-              "height": 48,
-              "descendants": {
-                "n7ZGOM/XyosS": {
-                  "content": "Choose project..."
-                },
-                "tkJJA": {
-                  "enabled": false
-                },
-                "sklbG": {
-                  "opacity": 0.45
-                }
-              }
-            },
-            {
-              "type": "frame",
-              "id": "SaQTy",
-              "name": "Application content",
-              "width": "fill_container",
-              "height": "fill_container",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "ML72u",
-                  "name": "Workflow output area",
-                  "width": "fill_container",
-                  "height": "fill_container",
-                  "fill": "$--background",
-                  "layout": "vertical",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "id": "c26J1e",
-                      "type": "ref",
-                      "ref": "j9NDa7",
-                      "name": "Act update required empty state",
-                      "descendants": {
-                        "Hlp4j": {
-                          "icon": "circle-arrow-up",
-                          "fill": "$--color-warning-foreground"
-                        },
-                        "La30W": {
-                          "content": "Update act to continue"
-                        },
-                        "hTPbf": {
-                          "content": "Your installed version of act is too old for Act GUI.\nUpdate to a supported version, then check again."
-                        },
-                        "E6ChYR": {
-                          "name": "Open act update instructions"
-                        },
-                        "E6ChYR/AsNqs": {
-                          "icon": "external-link"
-                        },
-                        "E6ChYR/LEKF7": {
-                          "content": "Update act"
-                        },
-                        "sv39E": {
-                          "name": "Check act version again"
-                        },
-                        "sv39E/fhFeQ": {
-                          "icon": "refresh-cw"
-                        },
-                        "sv39E/XyosS": {
-                          "content": "Check again"
                         }
                       }
                     }
