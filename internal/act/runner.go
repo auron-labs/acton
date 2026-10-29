@@ -31,8 +31,10 @@ type Runner struct {
 	finished            chan struct{}
 	done                bool
 	exitErr             error
+	cleanupErr          error
 	onFlush             func()
 	level               logrus.Level
+	insecureSecrets     bool
 }
 
 // Start validates flags, then loads and executes the workflow off the UI thread.
@@ -57,20 +59,22 @@ func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error 
 	r.cancel, r.forceCancel = cancel, forceCancel
 	r.finished = make(chan struct{})
 	r.onFlush = onFlush
+	r.insecureSecrets = o.config.InsecureSecrets
 	r.level = logrus.InfoLevel
 	if o.verbose {
 		r.level = logrus.DebugLevel
 	}
 	r.mu.Unlock()
 	go func() {
-		err := r.execute(ctx, o)
+		err := r.execute(ctx, o, dir)
 		r.mu.Lock()
 		switch {
 		case r.exitErr != nil:
 			err = r.exitErr
 		case jobCtx.Err() != nil:
-			err = context.Canceled
+			err = errors.Join(context.Canceled, err)
 		}
+		err = errors.Join(err, r.cleanupErr)
 		r.exitErr = err
 		if r.timer != nil {
 			r.timer.Stop()
@@ -86,7 +90,7 @@ func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error 
 	return nil
 }
 
-func (r *Runner) execute(ctx context.Context, o *options) (err error) {
+func (r *Runner) execute(ctx context.Context, o *options, dir string) (err error) {
 	logger := r.WithJobLogger()
 	// Some act packages log outside the context; restore the host logger after the run.
 	standard := logrus.StandardLogger()
@@ -152,6 +156,54 @@ func (r *Runner) execute(ctx context.Context, o *options) (err error) {
 			err = errors.Join(err, restoreErr)
 		}()
 	}
+	if !o.dryrun {
+		id, idErr := projectID(dir)
+		if idErr != nil {
+			return idErr
+		}
+		cli, clientErr := container.GetDockerClient(ctx)
+		if clientErr != nil {
+			return fmt.Errorf("connect Docker: %w", clientErr)
+		}
+		defer func() { err = errors.Join(err, cli.Close()) }()
+		if err := cleanupResources(ctx, cli, id); err != nil {
+			return fmt.Errorf("clean previous run: %w", err)
+		}
+		host, closeProxy, proxyErr := startDockerProxy(ctx, cli, id)
+		if proxyErr != nil {
+			return proxyErr
+		}
+		defer closeProxy()
+		for _, key := range []string{"DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"} {
+			previous, existed := os.LookupEnv(key)
+			defer func() {
+				var restoreErr error
+				if existed {
+					restoreErr = os.Setenv(key, previous)
+				} else {
+					restoreErr = os.Unsetenv(key)
+				}
+				err = errors.Join(err, restoreErr)
+			}()
+			if key == "DOCKER_HOST" {
+				err = os.Setenv(key, host)
+			} else {
+				err = os.Unsetenv(key)
+			}
+			if err != nil {
+				return fmt.Errorf("configure Docker proxy: %w", err)
+			}
+		}
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if cleanupErr := cleanupResources(cleanupCtx, cli, id); cleanupErr != nil {
+				r.mu.Lock()
+				r.cleanupErr = fmt.Errorf("clean completed run: %w", cleanupErr)
+				r.mu.Unlock()
+			}
+		}()
+	}
 	engine, err := actrunner.New(c)
 	if err != nil {
 		return fmt.Errorf("configure act: %w", err)
@@ -186,7 +238,7 @@ func (r *Runner) execute(ctx context.Context, o *options) (err error) {
 func (r *Runner) WithJobLogger() *logrus.Logger {
 	logger := logrus.New()
 	logger.SetOutput(r)
-	logger.SetFormatter(&logFormatter{})
+	logger.SetFormatter(&logFormatter{masked: !r.insecureSecrets})
 	logger.SetLevel(r.level)
 	// An artifact server bind failure must cancel the run, never exit the GUI.
 	logger.ExitFunc = func(int) { r.fail(errors.New("act server failed; see runner output")) }
@@ -248,9 +300,14 @@ func (r *Runner) Drain() (lines []string, done bool, err error) {
 
 // act masks messages but leaves workflow-command arguments in JSON fields.
 // Those unused diagnostic fields can contain secrets, including add-mask values.
-type logFormatter struct{ logrus.JSONFormatter }
+type logFormatter struct {
+	logrus.JSONFormatter
+	masked bool
+}
 
 func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	// Only act's job logger applies its secret masker before our formatter.
+	entry.Data["msg_masked"] = f.masked && entry.Data["job"] != nil
 	delete(entry.Data, "arg")
 	delete(entry.Data, "raw")
 	delete(entry.Data, "kvPairs")
