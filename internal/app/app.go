@@ -66,6 +66,9 @@ type App struct {
 	nextRunID int
 	runDir    string
 	history   []runSnapshot
+
+	recent     []string // recently opened project dirs, newest first
+	recentPath string   // "" disables persistence
 }
 
 // logUIState holds view-scoped widget state for the log pane.
@@ -104,6 +107,8 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 		return err
 	}
 	a := newApp()
+	a.recentPath = recentFile()
+	a.recent = loadRecent(a.recentPath)
 	defer a.shutdown()
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -203,6 +208,7 @@ func (a *App) setDir(dir string) {
 	}
 	a.fileErr = ""
 	a.rescanWorkflows()
+	a.rememberProject(dir)
 }
 
 // loadWorkflow refreshes the selector metadata only when the target changes.

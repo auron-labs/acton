@@ -143,6 +143,7 @@ func (a *App) emptyRunView(c *ui.Context) {
 			if choose.Clicked() {
 				a.pickFolder()
 			}
+			a.recentList(c)
 			return
 		}
 		components.Icon(c, lucide.SquareTerminal()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
@@ -165,6 +166,32 @@ func (a *App) emptyRunView(c *ui.Context) {
 			if run.Clicked() {
 				a.startRun()
 			}
+		}
+	})
+}
+
+// recentList shows the recently opened projects under the picker button;
+// clicking one reopens it. It renders nothing when there is no history.
+func (a *App) recentList(c *ui.Context) {
+	dirs := a.recentProjects()
+	if len(dirs) == 0 {
+		return
+	}
+	t := c.Theme()
+	ui.Column(c).FillWidth().MaxWidth(420).Gap(t.Space(0.5)).Margin(t.Space(3), 0, 0, 0).Children(func() {
+		components.Text(c, "Recent projects").FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted).SingleLine().Padding(0, t.Space(2), t.Space(1), t.Space(2))
+		for _, dir := range dirs {
+			row := ui.Row(c.Key("recent:" + dir)).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
+			if row.Hovered() {
+				row.Background(t.Text.Alpha(.04))
+			}
+			row.Label("Open " + dir).Cursor(ui.CursorPointer).OnClick(func() { a.setDir(dir) })
+			row.Children(func() {
+				components.Icon(c, lucide.Folder()).Size(t.Space(4), t.Space(4)).TextColor(t.TextMuted).Shrink(0)
+				ui.Row(c).Grow(1).MinWidth(0).Clip().Children(func() {
+					components.Text(c, abbrevHome(dir)).SingleLine()
+				})
+			})
 		}
 	})
 }
