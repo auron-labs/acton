@@ -111,6 +111,7 @@ func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "start_run", Description: "Start a workflow using the desktop's current settings. Rejects concurrent runs. Workflow commands can modify files and use Docker or the network."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			//nolint:contextcheck // A started workflow outlives this HTTP request; stop_run cancels it explicitly.
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
 				if a.running || a.settings.Dir == "" {
 					return nil, errors.New("choose a project and wait for any active run to finish")
@@ -139,7 +140,10 @@ func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 	type settingsInput struct {
 		Patch map[string]json.RawMessage `json:"patch" jsonschema:"Fields to change: Dir, Workflow, Event, Job, Platforms, Arch, Secrets, SecretFile, Env, EnvFile, Vars, VarFile, Inputs, EventPayload, DryRun, Verbose, Pull, Reuse, Bind, Quiet, ExtraArgs. Omitted fields are preserved. Changing Dir loads that project's defaults first."`
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: "update_settings", Description: "Update desktop settings in memory. Rejects invalid flags and changes while a run is active. Use the desktop Save button to persist settings."},
+	mcp.AddTool(s, &mcp.Tool{Name: "update_settings", Description: "Update desktop settings in memory. Rejects invalid flags and changes while a run is active. Use the desktop Save button to persist settings.", InputSchema: map[string]any{
+		"type": "object", "required": []string{"patch"}, "additionalProperties": false,
+		"properties": map[string]any{"patch": map[string]any{"type": "object", "additionalProperties": true}},
+	}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in settingsInput) (*mcp.CallToolResult, any, error) {
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
 				if err := a.updateSettings(in.Patch); err != nil {
@@ -189,6 +193,7 @@ func (a *App) updateSettings(patch map[string]json.RawMessage) error {
 	var changes settings.Settings
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
+	//nolint:musttag // The existing settings wire format intentionally uses exported Go field names.
 	if err := decoder.Decode(&changes); err != nil {
 		// Decoder errors can include user-supplied values; never echo secrets.
 		return errors.New("invalid settings patch: check field names and value types")
@@ -203,16 +208,17 @@ func (a *App) updateSettings(patch map[string]json.RawMessage) error {
 	candidate.Env = slices.Clone(candidate.Env)
 	candidate.Vars = slices.Clone(candidate.Vars)
 	candidate.Inputs = slices.Clone(candidate.Inputs)
+	//nolint:musttag // Preserve the existing settings field names in the MCP wire format.
 	if err := json.Unmarshal(data, &candidate); err != nil {
 		return errors.New("invalid settings patch")
 	}
 	info, err := os.Stat(candidate.Dir)
 	if err != nil || !info.IsDir() {
-		return errors.New("Dir must be an existing project directory")
+		return errors.New("dir must be an existing project directory")
 	}
 	args, err := candidate.Args()
 	if err != nil {
-		return err
+		return fmt.Errorf("validate settings: %w", err)
 	}
 	if err := act.Validate(candidate.Dir, args); err != nil {
 		return errors.New("invalid act flags in settings")

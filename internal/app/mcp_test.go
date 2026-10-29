@@ -88,6 +88,7 @@ func TestMCPDesktopControl(t *testing.T) {
 	call("update_settings", map[string]any{"patch": map[string]any{"Event": "release"}}, true)
 	var run runSnapshot
 	for {
+		//nolint:musttag // The nested act model uses its established exported field names.
 		if err := json.Unmarshal([]byte(call("get_run", map[string]any{}, false)), &run); err != nil {
 			t.Fatal(err)
 		}
@@ -107,6 +108,7 @@ func TestMCPDesktopControl(t *testing.T) {
 	var history struct {
 		Runs []runSnapshot `json:"runs"`
 	}
+	//nolint:musttag // The nested act model uses its established exported field names.
 	if err := json.Unmarshal([]byte(call("list_runs", map[string]any{}, false)), &history); err != nil || len(history.Runs) != 2 {
 		t.Fatalf("session history: %+v, %v", history, err)
 	}
@@ -120,7 +122,7 @@ func TestMCPDesktopControl(t *testing.T) {
 func TestMCPRejectsCrossOriginRequests(t *testing.T) {
 	a := newApp()
 	handler := a.mcpHandler(func(action func()) { action() })
-	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7337/mcp", strings.NewReader(`{}`))
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://127.0.0.1:7337/mcp", strings.NewReader(`{}`))
 	r.Header.Set("Origin", "https://untrusted.example")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
@@ -165,14 +167,14 @@ func TestMCPQueuedRequestCancellation(t *testing.T) {
 	called := false
 	_, _, err := a.mcpCall(ctx, func(action func()) { queued = action }, func() (any, error) {
 		called = true
-		return nil, nil
+		return struct{}{}, nil
 	})
 	queued()
 	if err == nil || called {
 		t.Fatal("cancelled request still changed state")
 	}
 	close(a.done)
-	_, _, err = a.mcpCall(t.Context(), func(action func()) { action() }, func() (any, error) { return nil, nil })
+	_, _, err = a.mcpCall(t.Context(), func(action func()) { action() }, func() (any, error) { return struct{}{}, nil })
 	if err == nil {
 		t.Fatal("request after shutdown did not return")
 	}
