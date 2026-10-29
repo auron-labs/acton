@@ -60,11 +60,19 @@ type App struct {
 	logUI   logUIState
 	rawLogs map[*act.Job]*rawLog
 
-	mcpServer *http.Server
-	runID     int
-	nextRunID int
-	runDir    string
-	history   []runSnapshot
+	mcpServer           *http.Server
+	runID               int
+	nextRunID           int
+	runDir              string
+	history             []runSnapshot
+	preferences         preferences
+	preferencesPath     string
+	preferencesOpen     bool
+	preferenceErr       string
+	runFiles            *runFiles
+	notificationPending bool
+	shuttingDown        bool
+	notifyTest          func(act.Status)
 
 	recent     []string // recently opened project dirs, newest first
 	recentPath string   // "" disables persistence
@@ -105,6 +113,12 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 		return err
 	}
 	a := newApp()
+	a.preferencesPath = preferencesFile()
+	var prefErr error
+	a.preferences, prefErr = loadPreferences(a.preferencesPath)
+	if prefErr != nil {
+		a.preferenceErr = "Cannot load preferences: " + prefErr.Error()
+	}
 	a.recentPath = recentFile()
 	a.recent = loadRecent(a.recentPath)
 	defer a.shutdown()
@@ -320,21 +334,34 @@ func (a *App) startRun() {
 	if a.running || a.settings.Dir == "" || len(a.workflows) == 0 {
 		return
 	}
+	a.clearRun()
+	a.started = time.Now()
+	var err error
+	if a.preferences.SaveRuns {
+		a.runFiles, err = newRunFiles(a.settings.Dir, a.started)
+		if err != nil {
+			a.preferenceErr = "Cannot save run output: " + err.Error()
+		}
+	}
 	args, err := a.settings.Args()
 	if err != nil {
 		a.runErr = err.Error()
+		a.writeRunFile(`{"msg":"act failed to start"}`)
+		a.closeRunFiles()
+		a.notifyRun(act.StatusFailure)
 		return
 	}
-	a.clearRun()
 	r := &act.Runner{}
 	err = r.Start(a.settings.Dir, args, a.scheduleFlush, a.scheduleFlush)
 	if err != nil {
 		a.runErr = fmt.Sprintf("failed to start act: %v", err)
+		a.writeRunFile(`{"msg":"act failed to start"}`)
+		a.closeRunFiles()
+		a.notifyRun(act.StatusFailure)
 		return
 	}
 	a.runner = r
 	a.running = true
-	a.started = time.Now()
 	a.nextRunID++
 	a.runID, a.runDir = a.nextRunID, a.settings.Dir
 }
@@ -347,6 +374,7 @@ func (a *App) stopRun() {
 
 // shutdown waits for act's post steps and resource cleanup before returning to main.
 func (a *App) shutdown() {
+	a.shuttingDown = true
 	close(a.done)
 	if a.mcpServer != nil {
 		_ = a.mcpServer.Close()
@@ -354,7 +382,9 @@ func (a *App) shutdown() {
 	if a.runner != nil {
 		a.runner.Stop()
 		a.runner.Wait()
+		a.pump()
 	}
+	a.closeRunFiles()
 }
 
 // scheduleFlush asks the UI thread to drain runner output; coalesced so
@@ -373,18 +403,18 @@ func (a *App) scheduleFlush() {
 
 // pump drains buffered act output into the run model, on the main thread.
 func (a *App) pump() {
-	if a.runner == nil {
+	if a.runner == nil || !a.running {
 		return
 	}
 	lines, done, err := a.runner.Drain()
 	for _, l := range lines {
-		a.run.Feed(l)
+		a.feedRun(l)
 	}
 	if done {
 		// Any lines the scanner delivered after the last drain.
 		lines, _, _ = a.runner.Drain()
 		for _, l := range lines {
-			a.run.Feed(l)
+			a.feedRun(l)
 		}
 		a.running = false
 		a.elapsed = time.Since(a.started)
@@ -406,6 +436,17 @@ func (a *App) pump() {
 			}
 		}
 		a.run.Finish(st)
+		for _, job := range a.run.Jobs {
+			if job.Status == act.StatusFailure {
+				st = act.StatusFailure
+				break
+			}
+		}
+		if err != nil {
+			a.writeRunFile(fmt.Sprintf(`{"msg":"act %s"}`, st.String()))
+		}
+		a.closeRunFiles()
+		a.notifyRun(st)
 	}
 }
 

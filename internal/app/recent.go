@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,21 +59,24 @@ func saveRecent(path string, dirs []string) error {
 	}
 	data, err := json.Marshal(dirs)
 	if err != nil {
-		return err
+		return fmt.Errorf("save recent projects: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("save recent projects: %w", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".recent-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("save recent projects: %w", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	_, writeErr := tmp.Write(data)
 	if err := errors.Join(writeErr, tmp.Close()); err != nil {
-		return err
+		return fmt.Errorf("save recent projects: %w", err)
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace recent projects: %w", err)
+	}
+	return nil
 }
 
 // rememberProject records dir as the most recently opened project. Failing

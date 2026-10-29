@@ -52,6 +52,7 @@ func (a *App) configView(c *ui.Context) {
 					})
 					components.Text(c, "Passed verbatim to act.").FontSize(t.Rem(11.0 / 13)).TextColor(t.TextMuted)
 				})
+				a.runPreferencesView(c)
 				if a.fileErr != "" {
 					components.Text(c, a.fileErr).Padding(t.Space(3)).TextColor(t.Danger)
 				}
