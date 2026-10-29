@@ -214,6 +214,18 @@ func TestGitHubAnnotations(t *testing.T) {
 	if !strings.Contains(run.Jobs[0].Raw[1], "::error") {
 		t.Fatal("raw log was changed")
 	}
+	if len(step.Annotations) != 1 || len(run.Jobs[0].Annotations) != 1 || step.Annotations[0] != (Annotation{Severity: "error", File: "src/main.go", Line: "12", Message: "***"}) {
+		t.Fatalf("structured annotations: job=%+v step=%+v", run.Jobs[0].Annotations, step.Annotations)
+	}
+	feed(&run, `{"job":"CI/build","msg":"::WARNING file=a%2Cb,line=2,col=3,endLine=4,endColumn=5,title=t%3A%20x::bad%0A***"}`)
+	a := run.Jobs[0].Annotations[1]
+	if a != (Annotation{Severity: "warning", File: "a,b", Line: "2", Column: "3", EndLine: "4", EndColumn: "5", Title: "t:%20x", Message: "bad\n***"}) || len(step.Annotations) != 1 {
+		t.Fatalf("job annotation: %+v", a)
+	}
+	feed(&run, `{"job":"CI/build","step":"compile","stepID":["compile"],"command":"notice","msg":"  ❓  ::notice title=Info::ready"}`)
+	if got := step.Annotations[1]; got != (Annotation{Severity: "notice", Title: "Info", Message: "ready"}) {
+		t.Fatalf("act notice envelope: %+v", got)
+	}
 }
 
 func eventJSON(t *testing.T, e logEvent) string {

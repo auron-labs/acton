@@ -57,6 +57,7 @@ type Step struct {
 	Children    []*Step
 	Status      Status
 	Lines       []string
+	Annotations []Annotation
 	Started     time.Time
 	Ended       time.Time
 	Dur         time.Duration
@@ -138,17 +139,23 @@ type Item struct {
 
 // Job is one act job stream, including its matrix variant.
 type Job struct {
-	Key     string
-	Name    string
-	Status  Status
-	Items   []Item
-	Steps   []*Step
-	Started time.Time
-	Ended   time.Time
-	Raw     []string // original JSON records, verbatim
+	Key         string
+	Name        string
+	Status      Status
+	Items       []Item
+	Steps       []*Step
+	Started     time.Time
+	Ended       time.Time
+	Raw         []string // original JSON records, verbatim
+	Annotations []Annotation
 
 	byStep        map[string]*Step
 	pendingClones []actionClone
+}
+
+// Annotation is a workflow command parsed from masked output.
+type Annotation struct {
+	Severity, Title, Message, File, Line, Column, EndLine, EndColumn string
 }
 
 // Duration returns elapsed time between the job's first and last output.
@@ -366,8 +373,12 @@ func (r *Run) Feed(line string) {
 		return
 	}
 	msg := ansiRe.ReplaceAllString(*e.Message, "")
+	var annotation *Annotation
 	if e.Command != "ignored" {
-		msg = annotationMessage(msg)
+		annotation = parseAnnotation(msg)
+		if annotation != nil {
+			msg = formatAnnotation(*annotation)
+		}
 	}
 	if e.Job == "" && e.JobID == "" {
 		r.Runner = append(r.Runner, msg)
@@ -376,6 +387,13 @@ func (r *Run) Feed(line string) {
 	at := e.timestamp()
 	j := r.job(e, at)
 	j.Raw = append(j.Raw, line)
+	if annotation != nil {
+		j.Annotations = append(j.Annotations, *annotation)
+		if e.Step != "" || len(e.StepID) > 0 {
+			s := j.step(e, at)
+			s.Annotations = append(s.Annotations, *annotation)
+		}
+	}
 
 	// Workflow output is data, even when it contains act's lifecycle markers.
 	if e.RawOutput {
@@ -420,16 +438,23 @@ func (r *Run) Feed(line string) {
 }
 
 var (
-	annotationRe       = regexp.MustCompile(`(?is)^\s*(?:[❗🚧💬]\s*)?::(error|warning|notice)(?: ([^\r\n]*?))?::(.*)$`)
+	annotationRe       = regexp.MustCompile(`(?is)^\s*(?:[❗🚧💬❓]\s*)?::(error|warning|notice)(?: ([^\r\n]*?))?::(.*)$`)
 	annotationData     = strings.NewReplacer("%0D", "\r", "%0A", "\n", "%25", "%")
 	annotationProperty = strings.NewReplacer("%0D", "\r", "%0A", "\n", "%3A", ":", "%2C", ",", "%25", "%")
 )
 
 // Parse only the masked message; act's raw annotation fields can contain secrets.
 func annotationMessage(msg string) string {
+	if a := parseAnnotation(msg); a != nil {
+		return formatAnnotation(*a)
+	}
+	return msg
+}
+
+func parseAnnotation(msg string) *Annotation {
 	m := annotationRe.FindStringSubmatch(msg)
 	if m == nil {
-		return msg
+		return nil
 	}
 	properties := make(map[string]string)
 	for _, pair := range strings.Split(m[2], ",") {
@@ -438,21 +463,25 @@ func annotationMessage(msg string) string {
 			properties[strings.ToLower(key)] = annotationProperty.Replace(value)
 		}
 	}
-	location := properties["file"]
-	if line := properties["line"]; line != "" {
+	return &Annotation{Severity: strings.ToLower(m[1]), Title: properties["title"], Message: annotationData.Replace(m[3]), File: properties["file"], Line: properties["line"], Column: properties["col"], EndLine: properties["endline"], EndColumn: properties["endcolumn"]}
+}
+
+func formatAnnotation(a Annotation) string {
+	location := a.File
+	if line := a.Line; line != "" {
 		location += ":" + line
-		if col := properties["col"]; col != "" {
+		if col := a.Column; col != "" {
 			location += ":" + col
 		}
 	}
-	parts := []string{strings.ToUpper(m[1][:1]) + strings.ToLower(m[1][1:])}
+	parts := []string{strings.ToUpper(a.Severity[:1]) + a.Severity[1:]}
 	if location != "" {
 		parts = append(parts, location)
 	}
-	if title := properties["title"]; title != "" {
+	if title := a.Title; title != "" {
 		parts = append(parts, title)
 	}
-	return strings.Join(append(parts, annotationData.Replace(m[3])), ": ")
+	return strings.Join(append(parts, a.Message), ": ")
 }
 
 func (r *Run) addMessage(j *Job, e logEvent, at time.Time, msg string, raw bool) {
