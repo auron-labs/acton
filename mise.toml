@@ -19,3 +19,7 @@ test = "go test ./..."
 lint = "golangci-lint run ./..."
 check = "hk check --all"
 fix = "hk fix --all"
+
+[tasks."build:run"]
+run = "open build/darwin-arm64/acton.app"
+depends = ["build"]
