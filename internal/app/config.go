@@ -309,8 +309,8 @@ func (a *App) commandPreview(c *ui.Context) {
 				c.WriteClipboard(a.cmdline())
 			}
 		})
-		ui.Column(c).FillWidth().Padding(t.Space(2.5), t.Space(3)).Radius(t.Radius).Border(1, sectionBorder(c)).Background(ui.Hex("#07090C")).Children(func() {
-			components.Text(c, a.cmdline()).Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(ui.Hex("#C6CFDA")).MaxLines(3).Ellipsis("…").Selectable()
+		ui.Themed(c, logTheme(c)).FillWidth().Padding(t.Space(2.5), t.Space(3)).Radius(t.Radius).Border(1, sectionBorder(c)).Children(func() {
+			components.Text(c, a.cmdline()).Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).MaxLines(3).Ellipsis("…").Selectable()
 		})
 		if _, err := a.settings.Args(); err != nil {
 			components.Text(c, err.Error()).FontSize(t.Rem(11.0 / 13)).TextColor(t.Danger)

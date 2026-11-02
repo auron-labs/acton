@@ -26,7 +26,11 @@ func registerFonts() error {
 
 // designTheme applies the Pen palette at the shell, including native controls.
 func designTheme(c *ui.Context) *ui.Theme {
-	t := theme.Onevra(c)
+	return designPalette(c, c.Theme().Dark)
+}
+
+func designPalette(c *ui.Context, dark bool) *ui.Theme {
+	t := theme.Palette(dark)
 	if t.Dark {
 		t.Background = ui.Hex("#0B0D10")
 		t.Surface = ui.Hex("#1C222A")
@@ -71,6 +75,14 @@ func designTheme(c *ui.Context) *ui.Theme {
 	if p.TextScale > 0 {
 		t.FontSize *= p.TextScale
 	}
+	return t
+}
+
+// logTheme keeps controls and selection readable on the always-dark output panels.
+func logTheme(c *ui.Context) *ui.Theme {
+	t := designPalette(c, true)
+	t.Background = ui.Hex("#07090C")
+	t.Text = ui.Hex("#C6CFDA")
 	return t
 }
 

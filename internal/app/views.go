@@ -157,9 +157,9 @@ func (a *App) emptyRunView(c *ui.Context) {
 			components.Text(c, "Starting act…").TextColor(t.TextMuted)
 		} else {
 			components.Text(c, "Nothing has run yet").TextColor(t.TextMuted)
-			ui.Row(c).FillWidth().MaxWidth(560).Padding(t.Space(3), t.Space(3.5)).Radius(t.Radius).
-				Background(ui.Hex("#07090C")).Border(1, t.Border).Children(func() {
-				components.Text(c, a.cmdline()).FillWidth().Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13)).TextColor(ui.Hex("#C6CFDA")).Selectable()
+			ui.Themed(c, logTheme(c)).FillWidth().MaxWidth(560).Padding(t.Space(3), t.Space(3.5)).Radius(t.Radius).
+				Border(1, t.Border).Children(func() {
+				components.Text(c, a.cmdline()).FillWidth().Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13)).Selectable()
 			})
 			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow")
 			run.Children(func() {
@@ -400,11 +400,6 @@ func (a *App) logLineRow(c *ui.Context, r rowRef) {
 	row := ui.Row(c).FillWidth().Padding(0, t.Space(2.5), 0, indent)
 	color := t.Text
 	errorColor, warningColor := t.Danger, t.Warning
-	if r.step != nil {
-		row.Background(ui.Hex("#07090C"))
-		color = ui.Hex("#C6CFDA")
-		errorColor, warningColor = ui.Hex("#F27379"), ui.Hex("#E8A93F")
-	}
 	switch {
 	case strings.HasPrefix(r.line, "❌"), strings.Contains(r.line, "::error"), strings.HasPrefix(strings.ToLower(r.line), "error:"):
 		color = errorColor

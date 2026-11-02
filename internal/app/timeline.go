@@ -285,10 +285,10 @@ func stepOutputHeader(c *ui.Context, s *act.Step, tab *int) {
 		if len(s.Annotations) > 0 {
 			ui.Segmented(c, tab, fmt.Sprintf("Problems %d", len(s.Annotations)), "Log").Label("Step output mode")
 		} else {
-			components.Text(c, "Log").FontSize(11).TextColor(ui.Hex("#C6CFDA"))
+			components.Text(c, "Log").FontSize(11)
 		}
 		ui.Box(c).Grow(1)
-		copyColor := ui.Hex("#C6CFDA")
+		copyColor := c.Theme().Text
 		if len(s.Annotations) > 0 && *tab == 0 {
 			copyColor = c.Theme().TextMuted
 		}
@@ -322,12 +322,14 @@ func (a *App) stepOutput(c *ui.Context, row rowRef) {
 		lines += strings.Count(line, "\n") + 1
 	}
 	height := min(320, max(100, float32(max(lines, len(s.Annotations)*3))*18+42))
-	background := ui.Hex("#07090C")
+	outputTheme := logTheme(c)
+	background := outputTheme.Background
 	if len(s.Annotations) > 0 && *tab == 0 {
+		outputTheme = c.Theme()
 		background = panelBackground(c)
 	}
 	ui.Column(c).FillWidth().Padding(3, 12, 8, 76+float32(row.depth)*20).Children(func() {
-		ui.Column(c).FillWidth().Height(height).Shrink(0).Background(background).Radius(6).Border(1, c.Theme().Border).Clip().Children(func() {
+		ui.Themed(c, outputTheme).FillWidth().Height(height).Shrink(0).Background(background).Radius(6).Border(1, outputTheme.Border).Clip().Children(func() {
 			stepOutputHeader(c, s, tab)
 			if len(s.Annotations) > 0 && *tab == 0 {
 				components.ScrollView(c, components.ScrollViewOptions{}).Fill().MinHeight(0).Children(func() { annotationList(c, s.Annotations) })

@@ -143,6 +143,7 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 			MinWidth:            720,
 			MinHeight:           480,
 			StateKey:            "main",
+			Hidden:              true,
 			Theme:               designTheme,
 			HeaderLeading:       a.headerLeading,
 			HeaderActions:       a.headerActions,
@@ -150,6 +151,7 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 			ContentBehindHeader: true,
 		})
 		a.win = shell.Window()
+		a.win.OnReadyToShow(a.win.Show)
 		a.win.OnClosed(func() {
 			a.stopRun()
 			mygo.App.Quit()
