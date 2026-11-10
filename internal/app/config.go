@@ -1,6 +1,7 @@
 package app
 
 import (
+	"acton/internal/settings"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -163,7 +164,7 @@ func (s *Session) imagesView(c *ui.Context) {
 		})
 	}
 	if components.Button(c, "+ Add mapping", components.ButtonGhost).TextColor(t.Accent).Clicked() {
-		s.settings.Platforms = append(s.settings.Platforms, "=")
+		s.settings.Platforms = append(s.settings.Platforms, "="+settings.DefaultImage)
 	}
 	field(c, "Container architecture", func() {
 		values := []string{"linux/amd64", "linux/arm64", ""}
@@ -198,8 +199,12 @@ func (s *Session) mappingRow(c *ui.Context, i int) {
 		})
 		ui.Row(c).FillWidth().Gap(t.Space(1.25)).AlignItems(ui.Center).Children(func() {
 			components.Icon(c, lucide.CornerDownRight()).Size(t.Space(2.75), t.Space(2.75)).TextColor(t.TextMuted.Alpha(0.7)).Shrink(0)
-			input := ui.TextInputBase(c, &image).Grow(1).MinWidth(0).Placeholder("catthehacker/ubuntu:act-latest").Label(fmt.Sprintf("Container image %d", i+1))
-			input.Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(t.TextMuted)
+			input := ui.TextInputBase(c, &image).Grow(1).MinWidth(0).Placeholder("image required").Label(fmt.Sprintf("Container image %d", i+1))
+			input.Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(t.Text)
+			if image == "" {
+				// An unset image gets a warning outline so it cannot pass for a filled row.
+				input.Border(1, t.Warning).Radius(t.Radius).Padding(t.Space(0.5), t.Space(1))
+			}
 			if input.Changed() {
 				s.settings.Platforms[i] = runner + "=" + image
 			}

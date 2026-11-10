@@ -65,6 +65,10 @@ type Settings struct {
 	secretFileSet, envFileSet, varFileSet bool
 }
 
+// DefaultImage is the container image mapped to ubuntu-latest and pre-filled
+// for new runner mappings.
+const DefaultImage = "catthehacker/ubuntu:act-latest"
+
 // Default returns settings used when no .actrc provides a value.
 // The platform default avoids act's interactive first-run image prompt.
 func Default(dir string) *Settings {
@@ -72,7 +76,7 @@ func Default(dir string) *Settings {
 		Dir:                dir,
 		Event:              "push",
 		Pull:               true,
-		Platforms:          []string{"ubuntu-latest=catthehacker/ubuntu:act-latest"},
+		Platforms:          []string{"ubuntu-latest=" + DefaultImage},
 		platformsDefaulted: true,
 	}
 }

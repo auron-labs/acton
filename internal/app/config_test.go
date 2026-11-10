@@ -1,6 +1,7 @@
 package app
 
 import (
+	"acton/internal/settings"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,7 +49,7 @@ func TestSidebarEditors(t *testing.T) {
 	click("+ Add mapping")
 	edit("Runner label 2", "second")
 	click("Remove mapping 1")
-	if !slices.Equal(a.settings.Platforms, []string{"second="}) {
+	if !slices.Equal(a.settings.Platforms, []string{"second=" + settings.DefaultImage}) {
 		t.Fatalf("wrong mapping removed: %q", a.settings.Platforms)
 	}
 	// The surviving row must not inherit the removed row's edits.
