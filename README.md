@@ -37,9 +37,9 @@ Select **Overview** under Jobs to read GitHub Actions errors, warnings, and
 notices grouped by job and file. Each step's **Problems** tab shows its own
 annotations; **Log** keeps the full output available.
 
-Expand **Run preferences** to enable completion notifications or save run output
-as JSONL. These app preferences are saved separately from `.actrc`. Run output
-saving is off by default. Files are private to your user and stored under
+Expand **Run preferences** to turn off completion notifications (on by default)
+or save run output as JSONL. These app preferences are saved separately from
+`.actrc`. Run output saving is off by default. Files are private to your user and stored under
 `~/.local/share/acton/runs/<project-path-hash>/<timestamp>/`, or under
 `$XDG_DATA_HOME/acton/runs/` when that variable contains an absolute path. Each
 job gets a `<workflow>-<job>.jsonl` file; matrix variants and colliding names

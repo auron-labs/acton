@@ -66,10 +66,10 @@ func TestRunFilesPrivateDistinctAndMasked(t *testing.T) {
 func TestPreferencesRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "acton", "prefs.json")
 	p, err := loadPreferences(path)
-	if err != nil || p.SaveRuns || p.Notifications {
+	if err != nil || p.SaveRuns || !p.Notifications {
 		t.Fatalf("defaults: %+v %v", p, err)
 	}
-	p.SaveRuns = true
+	p.SaveRuns, p.Notifications = true, false
 	if err := savePreferences(path, p); err != nil {
 		t.Fatal(err)
 	}
@@ -167,5 +167,25 @@ func TestHistoryOmitsOutputWithoutMaskingGuarantee(t *testing.T) {
 	}
 	if strings.Contains(string(data), "secret-value") || strings.Count(string(data), "omitted") != 3 {
 		t.Fatalf("unmasked data persisted: %s", data)
+	}
+}
+
+func TestNotificationsDefaultOn(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		want    bool
+	}{
+		"missing key":    {`{"save_runs":true}`, true},
+		"explicit false": {`{"notifications":false}`, false},
+		"explicit true":  {`{"notifications":true}`, true},
+	} {
+		path := filepath.Join(t.TempDir(), "prefs.json")
+		if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p, err := loadPreferences(path)
+		if err != nil || p.Notifications != tc.want {
+			t.Fatalf("%s: %+v %v", name, p, err)
+		}
 	}
 }

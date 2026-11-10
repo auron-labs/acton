@@ -25,8 +25,11 @@ func preferencesFile() string {
 	return filepath.Join(dir, "acton", "preferences.json")
 }
 
+// defaultPreferences is used when no preference file or key says otherwise.
+func defaultPreferences() preferences { return preferences{Notifications: true} }
+
 func loadPreferences(path string) (preferences, error) {
-	var p preferences
+	p := defaultPreferences()
 	if path == "" {
 		return p, errors.New("user config directory unavailable")
 	}
@@ -36,10 +39,10 @@ func loadPreferences(path string) (preferences, error) {
 		return p, nil
 	}
 	if err != nil {
-		return preferences{}, fmt.Errorf("read preferences: %w", err)
+		return defaultPreferences(), fmt.Errorf("read preferences: %w", err)
 	}
 	if err := json.Unmarshal(b, &p); err != nil {
-		return preferences{}, fmt.Errorf("decode preferences: %w", err)
+		return defaultPreferences(), fmt.Errorf("decode preferences: %w", err)
 	}
 	return p, nil
 }
