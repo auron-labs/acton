@@ -306,6 +306,8 @@ func (s *Session) commandPreview(c *ui.Context) {
 				s.fileErr = ""
 				if err := s.settings.SaveActrc(); err != nil {
 					s.fileErr = err.Error()
+				} else {
+					s.markSettingsSaved()
 				}
 			}
 			copyButton := components.Button(c, "", components.ButtonGhost).Label("Copy command").Size(t.Space(6), t.Space(5)).Padding(0)
@@ -317,6 +319,9 @@ func (s *Session) commandPreview(c *ui.Context) {
 		ui.Themed(c, logTheme(c)).FillWidth().Padding(t.Space(2.5), t.Space(3)).Radius(t.Radius).Border(1, sectionBorder(c)).Children(func() {
 			components.Text(c, s.cmdline()).Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).MaxLines(3).Ellipsis("…").Selectable()
 		})
+		if s.settingsUnsaved() {
+			components.Text(c, "Settings changed. Save them to .actrc to keep them.").FontSize(t.Rem(11.0 / 13)).TextColor(t.Warning)
+		}
 		if _, err := s.settings.Args(); err != nil {
 			components.Text(c, err.Error()).FontSize(t.Rem(11.0 / 13)).TextColor(t.Danger)
 		}

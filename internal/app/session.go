@@ -36,6 +36,7 @@ type Session struct {
 	envTab       int
 	showDefaults bool
 	fileErr      string
+	savedArgs    string // resolved settings as last loaded from or saved to .actrc
 
 	run     act.Run
 	runner  *act.Runner
@@ -99,6 +100,7 @@ func newSession(app *App) *Session {
 	s.logUI.list.FollowEnd = true
 	s.logUI.runner.FollowEnd = true
 	s.logUI.runner.Key = func(i int) any { return i }
+	s.markSettingsSaved()
 	return s
 }
 
@@ -116,6 +118,7 @@ func (s *Session) setDir(dir string) {
 	s.settings = *settings.Default(dir)
 	s.settings.ExtraArgs = keep
 	s.settings.LoadActrc()
+	s.markSettingsSaved()
 	s.clearRun()
 	s.eventSel = s.settings.Event
 	s.eventOther = s.settings.Event
@@ -266,6 +269,24 @@ func (s *Session) clearRun() {
 	s.logUI.filter = filterAll
 	s.logUI.output = nil
 	s.logUI.tabs = nil
+}
+
+// settingsKey is the resolved act command line, used to detect unsaved edits.
+func settingsKey(st *settings.Settings) (string, error) {
+	args, err := st.Args()
+	if err != nil {
+		return "", err //nolint:wrapcheck // Callers only test whether the settings resolve.
+	}
+	return strings.Join(args, "\x00"), nil
+}
+
+func (s *Session) markSettingsSaved() { s.savedArgs, _ = settingsKey(&s.settings) }
+
+// settingsUnsaved reports valid settings that differ from the saved .actrc;
+// invalid ones already show their own error and cannot be saved.
+func (s *Session) settingsUnsaved() bool {
+	key, err := settingsKey(&s.settings)
+	return s.settings.Dir != "" && err == nil && key != s.savedArgs
 }
 
 // startRun launches act with the current settings.

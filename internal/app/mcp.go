@@ -279,12 +279,14 @@ func (s *Session) updateSettings(patch map[string]json.RawMessage) error {
 		return errors.New("invalid settings patch: check field names and value types")
 	}
 	candidate := s.settings
+	savedArgs := s.savedArgs
 	if changes.Dir != "" && changes.Dir != candidate.Dir {
 		if other := s.app.sessionFor(changes.Dir); other != nil && other != s {
 			return errors.New("dir is already open in another project tab")
 		}
 		candidate = *settings.Default(changes.Dir)
 		candidate.LoadActrc()
+		savedArgs, _ = settingsKey(&candidate)
 	}
 	candidate.Platforms = slices.Clone(candidate.Platforms)
 	candidate.Workflows = slices.Clone(candidate.Workflows)
@@ -310,7 +312,7 @@ func (s *Session) updateSettings(patch map[string]json.RawMessage) error {
 	if candidate.Dir != s.settings.Dir {
 		s.clearRun()
 	}
-	s.settings = candidate
+	s.settings, s.savedArgs = candidate, savedArgs
 	s.eventSel, s.eventOther = candidate.Event, candidate.Event
 	if !contains(workflowEvents, s.eventSel) {
 		s.eventSel = "custom"
