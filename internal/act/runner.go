@@ -216,7 +216,12 @@ func (r *Runner) execute(ctx context.Context, o *options, dir string) (err error
 			}
 			c.ArtifactServerAddr = ip.String()
 		}
-		stopArtifacts := artifacts.Serve(ctx, c.ArtifactServerPath, c.ArtifactServerAddr, c.ArtifactServerPort)
+		if c.ArtifactServerPath != "" {
+			if c.ArtifactServerAuthKey, err = artifacts.NewAuthKey(); err != nil {
+				return fmt.Errorf("configure artifact server: %w", err)
+			}
+		}
+		stopArtifacts := artifacts.Serve(ctx, c.ArtifactServerPath, c.ArtifactServerAddr, c.ArtifactServerPort, c.ArtifactServerAuthKey)
 		defer stopArtifacts()
 		if !o.noCacheServer && c.Env["ACTIONS_CACHE_URL"] == "" {
 			cache, cacheErr := artifactcache.StartHandler(o.cachePath, o.cacheURL, o.cacheAddr, o.cachePort, logger)
