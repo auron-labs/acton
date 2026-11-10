@@ -132,21 +132,21 @@ func (h *runFiles) close() error {
 	return first
 }
 
-func (a *App) writeRunFile(line string) {
-	if a.runFiles == nil {
+func (s *Session) writeRunFile(line string) {
+	if s.runFiles == nil {
 		return
 	}
-	if err := a.runFiles.write(line); err != nil {
-		a.preferenceErr = "Cannot save run output: " + err.Error()
-		a.closeRunFiles()
+	if err := s.runFiles.write(line); err != nil {
+		s.app.preferenceErr = "Cannot save run output: " + err.Error()
+		s.closeRunFiles()
 	}
 }
-func (a *App) feedRun(line string) { a.run.Feed(line); a.writeRunFile(line) }
-func (a *App) closeRunFiles() {
-	if a.runFiles != nil {
-		if err := a.runFiles.close(); err != nil {
-			a.preferenceErr = "Cannot close run output: " + err.Error()
+func (s *Session) feedRun(line string) { s.run.Feed(line); s.writeRunFile(line) }
+func (s *Session) closeRunFiles() {
+	if s.runFiles != nil {
+		if err := s.runFiles.close(); err != nil {
+			s.app.preferenceErr = "Cannot close run output: " + err.Error()
 		}
-		a.runFiles = nil
+		s.runFiles = nil
 	}
 }

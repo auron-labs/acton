@@ -12,7 +12,7 @@ import (
 )
 
 func TestTimelineFailureNavigation(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = "/tmp/project"
 	a.workflows = []string{".github/workflows/ci.yml"}
 	j := &act.Job{Key: "CI/test", Name: "test", Status: act.StatusFailure}
@@ -26,7 +26,7 @@ func TestTimelineFailureNavigation(t *testing.T) {
 	a.run.Jobs = []*act.Job{j}
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
-		a.view(c)
+		a.app.view(c)
 	}, 1500, 900)
 	for _, text := range []string{"All 40 steps", "39 passed", "1 failed", "1 slow · over 30s"} {
 		if !tt.HasText(text) {
@@ -57,7 +57,7 @@ func TestTimelineFailureNavigation(t *testing.T) {
 }
 
 func TestCommandPreviewRedactsAndQuotes(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Secrets = []string{"TOKEN=private secret"}
 	a.settings.Env = []string{"PRICE=$HOME `whoami`"}
 	a.settings.ExtraArgs = "--secret EXTRA=private --secret=INLINE=private -sSHORT=private"
@@ -82,7 +82,7 @@ func TestCommandPreviewRedactsAndQuotes(t *testing.T) {
 }
 
 func TestTimelineCompositeFilters(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = "/tmp/project"
 	a.workflows = []string{".github/workflows/ci.yml"}
 	start := time.Now().Add(-2 * time.Minute)
@@ -99,7 +99,7 @@ func TestTimelineCompositeFilters(t *testing.T) {
 	}
 	j := &act.Job{Key: "build", Name: "build", Status: act.StatusFailure, Steps: []*act.Step{parent}, Items: []act.Item{{Step: parent}}, Started: start, Ended: parent.Ended}
 	a.run.Jobs = []*act.Job{j}
-	tt := ui.NewTester(func(c *ui.Context) { c.SetTheme(designTheme(c)); a.view(c) }, 1500, 900)
+	tt := ui.NewTester(func(c *ui.Context) { c.SetTheme(designTheme(c)); a.app.view(c) }, 1500, 900)
 	for _, label := range []string{"All 3 steps", "2 passed", "1 failed", "1 slow · over 30s", "1.1", "1.2", "1.3", "3 steps"} {
 		if !tt.HasText(label) {
 			t.Fatalf("missing %q: %q", label, tt.Texts())
@@ -138,7 +138,7 @@ func TestTimelineCompositeFilters(t *testing.T) {
 }
 
 func TestTimelineOutputBoundAndFollow(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	s := &act.Step{Name: "Log stream", Status: act.StatusRunning, Open: true, Started: time.Now()}
 	for i := range 100 {
 		s.Lines = append(s.Lines, fmt.Sprintf("Output %03d", i))

@@ -22,8 +22,10 @@ import (
 // act uses a process-wide logger and reads DOCKER_HOST from the environment.
 var executionMu sync.Mutex
 
-// Runner executes one embedded act plan and buffers JSON logs for the UI.
-type Runner struct {
+// engine executes one embedded act plan in this process and buffers its JSON logs.
+// It mutates process-wide state (environment, logger), so Acton runs it only in
+// a worker process, one plan per process.
+type engine struct {
 	mu                  sync.Mutex
 	pending             []string
 	cancel, forceCancel context.CancelFunc
@@ -39,7 +41,7 @@ type Runner struct {
 
 // Start validates flags, then loads and executes the workflow off the UI thread.
 // Callbacks run on workers and must schedule UI updates.
-func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error {
+func (r *engine) Start(dir string, args []string, onFlush, onDone func()) error {
 	o, err := parseOptions(dir, args)
 	if err != nil {
 		return err
@@ -90,7 +92,7 @@ func (r *Runner) Start(dir string, args []string, onFlush, onDone func()) error 
 	return nil
 }
 
-func (r *Runner) execute(ctx context.Context, o *options, dir string) (err error) {
+func (r *engine) execute(ctx context.Context, o *options, dir string) (err error) {
 	logger := r.WithJobLogger()
 	// Some act packages log outside the context; restore the host logger after the run.
 	standard := logrus.StandardLogger()
@@ -118,18 +120,9 @@ func (r *Runner) execute(ctx context.Context, o *options, dir string) (err error
 		cancel()
 		c.Secrets["GITHUB_TOKEN"] = c.Token
 	}
-	planner, err := model.NewWorkflowPlanner(o.workflows, o.noRecurse, o.strict)
+	plan, err := o.plan(c.EventName)
 	if err != nil {
-		return fmt.Errorf("load workflows: %w", err)
-	}
-	var plan *model.Plan
-	if o.job != "" {
-		plan, err = planner.PlanJob(o.job)
-	} else {
-		plan, err = planner.PlanEvent(c.EventName)
-	}
-	if err != nil {
-		return fmt.Errorf("plan workflows: %w", err)
+		return err
 	}
 	if plan == nil || len(plan.Stages) == 0 {
 		return errors.New("no jobs match the selected workflow, event, and job")
@@ -240,7 +233,7 @@ func (r *Runner) execute(ctx context.Context, o *options, dir string) (err error
 
 // WithJobLogger gives each job its own logger; act wraps its formatter to mask
 // secrets and ::add-mask:: values before writing JSON into the shared buffer.
-func (r *Runner) WithJobLogger() *logrus.Logger {
+func (r *engine) WithJobLogger() *logrus.Logger {
 	logger := logrus.New()
 	logger.SetOutput(r)
 	logger.SetFormatter(&logFormatter{masked: !r.insecureSecrets})
@@ -250,7 +243,7 @@ func (r *Runner) WithJobLogger() *logrus.Logger {
 	return logger
 }
 
-func (r *Runner) fail(err error) {
+func (r *engine) fail(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.done {
@@ -262,7 +255,7 @@ func (r *Runner) fail(err error) {
 
 // Write accepts complete JSON records from act's loggers, without a pipe or
 // scanner size limit. JSON escapes newlines inside workflow output.
-func (r *Runner) Write(p []byte) (int, error) {
+func (r *engine) Write(p []byte) (int, error) {
 	lines := strings.Split(strings.TrimSuffix(string(p), "\n"), "\n")
 	r.mu.Lock()
 	if !r.done {
@@ -275,7 +268,7 @@ func (r *Runner) Write(p []byte) (int, error) {
 
 // Stop first cancels jobs, allowing post steps and container cleanup, then
 // cancels the entire execution context after the grace period.
-func (r *Runner) Stop() {
+func (r *engine) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.done || r.cancel == nil || r.timer != nil {
@@ -286,7 +279,7 @@ func (r *Runner) Stop() {
 }
 
 // Wait waits for execution and cleanup to finish before the app exits.
-func (r *Runner) Wait() {
+func (r *engine) Wait() {
 	r.mu.Lock()
 	finished := r.finished
 	r.mu.Unlock()
@@ -296,7 +289,7 @@ func (r *Runner) Wait() {
 }
 
 // Drain returns buffered records and the execution status atomically.
-func (r *Runner) Drain() (lines []string, done bool, err error) {
+func (r *engine) Drain() (lines []string, done bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	lines, r.pending = r.pending, nil
@@ -321,4 +314,43 @@ func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		return nil, fmt.Errorf("format act log: %w", err)
 	}
 	return data, nil
+}
+
+// plan builds one plan from every selected workflow. Stages from different
+// workflows run side by side, as act does for a workflow directory.
+func (o *options) plan(event string) (*model.Plan, error) {
+	merged := &model.Plan{}
+	var errs []error
+	for _, path := range o.workflows {
+		planner, err := model.NewWorkflowPlanner(path, o.noRecurse, o.strict)
+		if err != nil {
+			return nil, fmt.Errorf("load workflows: %w", err)
+		}
+		var plan *model.Plan
+		if o.job != "" {
+			plan, err = planner.PlanJob(o.job)
+		} else {
+			plan, err = planner.PlanEvent(event)
+		}
+		if err != nil {
+			errs = append(errs, err)
+			if o.job == "" {
+				break
+			}
+		}
+		if plan == nil {
+			continue
+		}
+		for i, stage := range plan.Stages {
+			if i == len(merged.Stages) {
+				merged.Stages = append(merged.Stages, &model.Stage{})
+			}
+			merged.Stages[i].Runs = append(merged.Stages[i].Runs, stage.Runs...)
+		}
+	}
+	// A job filter only matches some of the selected workflows.
+	if len(errs) > 0 && (o.job == "" || len(merged.Stages) == 0) {
+		return nil, fmt.Errorf("plan workflows: %w", errors.Join(errs...))
+	}
+	return merged, nil
 }

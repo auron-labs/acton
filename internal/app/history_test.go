@@ -82,7 +82,7 @@ func TestPreferencesRoundTrip(t *testing.T) {
 func TestPumpCompletesOnlyOnce(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	project := t.TempDir()
-	a := newApp()
+	a := newTestSession()
 	a.started = time.Now()
 	a.running = true
 	var err error
@@ -97,7 +97,7 @@ func TestPumpCompletesOnlyOnce(t *testing.T) {
 	}
 	a.runner.Wait()
 	calls := 0
-	a.notifyTest = func(act.Status) { calls++ }
+	a.app.notifyTest = func(*Session, act.Status) { calls++ }
 	a.pump()
 	elapsed := a.elapsed
 	entries, err := os.ReadDir(dir)
@@ -128,7 +128,7 @@ func TestPumpCompletesOnlyOnce(t *testing.T) {
 
 func TestHistoryWriteFailureKeepsOutput(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	a := newApp()
+	a := newTestSession()
 	var err error
 	a.runFiles, err = newRunFiles(t.TempDir(), time.Now())
 	if err != nil {
@@ -138,8 +138,8 @@ func TestHistoryWriteFailureKeepsOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.feedRun(`{"msg":"visible diagnostic"}`)
-	if len(a.run.Runner) != 1 || a.run.Runner[0] != "visible diagnostic" || a.preferenceErr == "" || a.runFiles != nil {
-		t.Fatalf("output or error lost: %+v %q", a.run.Runner, a.preferenceErr)
+	if len(a.run.Runner) != 1 || a.run.Runner[0] != "visible diagnostic" || a.app.preferenceErr == "" || a.runFiles != nil {
+		t.Fatalf("output or error lost: %+v %q", a.run.Runner, a.app.preferenceErr)
 	}
 }
 

@@ -13,52 +13,52 @@ import (
 
 var workflowEvents = []string{"push", "pull_request", "workflow_dispatch", "schedule", "release", "issues", "create", "delete", "fork"}
 
-func (a *App) configView(c *ui.Context) {
+func (s *Session) configView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Background(panelBackground(c)).Children(func() {
 		components.ScrollView(c, components.ScrollViewOptions{}).Fill().Children(func() {
 			ui.Column(c).FillWidth().Children(func() {
-				a.targetView(c)
-				configSection(c, "Images & platforms", fmt.Sprintf("%d mappings", len(a.settings.Platforms)), lucide.Container(), &a.configOpen[0], func() { a.imagesView(c) })
-				configSection(c, "Environment", a.environmentSummary(), lucide.KeyRound(), &a.configOpen[1], func() { a.environmentView(c) })
-				configSection(c, "Options", fmt.Sprintf("%d on", a.optionCount()), lucide.SlidersHorizontal(), &a.configOpen[2], func() {
+				s.targetView(c)
+				configSection(c, "Images & platforms", fmt.Sprintf("%d mappings", len(s.settings.Platforms)), lucide.Container(), &s.configOpen[0], func() { s.imagesView(c) })
+				configSection(c, "Environment", s.environmentSummary(), lucide.KeyRound(), &s.configOpen[1], func() { s.environmentView(c) })
+				configSection(c, "Options", fmt.Sprintf("%d on", s.optionCount()), lucide.SlidersHorizontal(), &s.configOpen[2], func() {
 					for _, option := range []struct {
 						value *bool
 						label string
 					}{
-						{&a.settings.DryRun, "Dry run (plan only)"},
-						{&a.settings.Verbose, "Verbose output"},
-						{&a.settings.Pull, "Always pull images"},
-						{&a.settings.Reuse, "Reuse containers"},
-						{&a.settings.Bind, "Bind workdir (no copy)"},
-						{&a.settings.Quiet, "Quiet (no progress)"},
+						{&s.settings.DryRun, "Dry run (plan only)"},
+						{&s.settings.Verbose, "Verbose output"},
+						{&s.settings.Pull, "Always pull images"},
+						{&s.settings.Reuse, "Reuse containers"},
+						{&s.settings.Bind, "Bind workdir (no copy)"},
+						{&s.settings.Quiet, "Quiet (no progress)"},
 					} {
 						components.Switch(c, option.value, option.label, components.SwitchOptions{Compact: true})
 					}
 				})
-				configSection(c, "Advanced", "Payload, extra args", lucide.Terminal(), &a.configOpen[3], func() {
+				configSection(c, "Advanced", "Payload, extra args", lucide.Terminal(), &s.configOpen[3], func() {
 					field(c, "Event payload file", func() {
 						ui.Row(c).FillWidth().Gap(t.Space(1.5)).Children(func() {
-							styleConfigInput(c, components.TextBox(c, &a.settings.EventPayload, components.TextBoxOptions{}).
+							styleConfigInput(c, components.TextBox(c, &s.settings.EventPayload, components.TextBoxOptions{}).
 								Placeholder("path/to/event.json").Label("Event payload JSON file").Grow(1).MinWidth(0))
 							if components.Button(c, "Browse", components.ButtonSecondary).Shrink(0).Clicked() {
-								a.pickConfigFile("Event payload")
+								s.pickConfigFile("Event payload")
 							}
 						})
 					})
 					field(c, "Extra act args", func() {
-						styleConfigInput(c, components.TextBox(c, &a.settings.ExtraArgs, components.TextBoxOptions{Multiline: true}).
+						styleConfigInput(c, components.TextBox(c, &s.settings.ExtraArgs, components.TextBoxOptions{Multiline: true}).
 							Placeholder("--matrix os:linux …").Label("Additional act flags").Lines(3, 3))
 					})
 					components.Text(c, "Passed verbatim to act.").FontSize(t.Rem(11.0 / 13)).TextColor(t.TextMuted)
 				})
-				a.runPreferencesView(c)
-				if a.fileErr != "" {
-					components.Text(c, a.fileErr).Padding(t.Space(3)).TextColor(t.Danger)
+				s.app.runPreferencesView(c)
+				if s.fileErr != "" {
+					components.Text(c, s.fileErr).Padding(t.Space(3)).TextColor(t.Danger)
 				}
 			})
 		})
-		a.commandPreview(c)
+		s.commandPreview(c)
 	})
 }
 
@@ -84,27 +84,27 @@ func configSection(c *ui.Context, title, summary string, icon *ui.SVG, open *boo
 	})
 }
 
-func (a *App) targetView(c *ui.Context) {
+func (s *Session) targetView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).FillWidth().Padding(t.Space(4)).Gap(t.Space(3.5)).BorderWidth(0, 0, 1, 0).BorderColor(sectionBorder(c)).Children(func() {
-		field(c, "Workflow", func() {
-			opts := make([]components.NativeSelectOption[string], 0, len(a.workflows)+1)
-			opts = append(opts, components.NativeSelectOption[string]{Value: "", Label: "All workflows"})
-			for _, w := range a.workflows {
-				opts = append(opts, components.NativeSelectOption[string]{Value: w, Label: filepath.Base(w)})
-			}
-			sel := components.NativeSelect(c, &a.settings.Workflow, opts)
-			sel.Trigger.FillWidth().Label("Workflow").Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13))
-			if sel.Changed() {
-				a.loadWorkflow()
-			}
+		field(c, "Workflows", func() {
+			ui.Column(c).FillWidth().Gap(t.Space(2)).Children(func() {
+				for _, w := range s.workflows {
+					selected := slices.Contains(s.settings.Workflows, w)
+					was := selected
+					components.Checkbox(c.Key(w), &selected, filepath.Base(w))
+					if selected != was {
+						s.toggleWorkflow(w, selected)
+					}
+				}
+			})
 		})
-		if a.workflowErr != "" {
-			components.Text(c, a.workflowErr).TextColor(t.Warning).FontSize(t.Rem(12.0 / 13))
-		} else if a.workflowMeta != "" {
+		if s.workflowErr != "" {
+			components.Text(c, s.workflowErr).TextColor(t.Warning).FontSize(t.Rem(12.0 / 13))
+		} else if s.workflowMeta != "" {
 			ui.Row(c).FillWidth().Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
 				components.Icon(c, lucide.GitBranch()).Size(t.Space(3.25), t.Space(3.25)).TextColor(t.TextMuted).Shrink(0)
-				components.Text(c, a.workflowMeta).FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted)
+				components.Text(c, s.workflowMeta).FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted)
 			})
 		}
 		ui.Row(c).FillWidth().Gap(t.Space(2.5)).Children(func() {
@@ -115,66 +115,66 @@ func (a *App) targetView(c *ui.Context) {
 						opts = append(opts, components.NativeSelectOption[string]{Value: e, Label: e})
 					}
 					opts = append(opts, components.NativeSelectOption[string]{Value: "custom", Label: "Custom…"})
-					sel := components.NativeSelect(c, &a.eventSel, opts)
+					sel := components.NativeSelect(c, &s.eventSel, opts)
 					sel.Trigger.FillWidth().Label("Event")
 					if sel.Changed() {
-						if a.eventSel == "custom" {
-							a.eventOther = a.settings.Event
+						if s.eventSel == "custom" {
+							s.eventOther = s.settings.Event
 						} else {
-							a.settings.Event = a.eventSel
+							s.settings.Event = s.eventSel
 						}
 					}
 				})
 			})
 			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Children(func() {
 				field(c, "Job", func() {
-					if len(a.workflowJobs) == 0 {
-						styleConfigInput(c, components.TextBox(c, &a.settings.Job, components.TextBoxOptions{}).Placeholder("All jobs").Label("Job ID filter"))
+					if len(s.workflowJobs) == 0 {
+						styleConfigInput(c, components.TextBox(c, &s.settings.Job, components.TextBoxOptions{}).Placeholder("All jobs").Label("Job ID filter"))
 						return
 					}
 					opts := []components.NativeSelectOption[string]{{Value: "", Label: "All jobs"}}
-					for _, job := range a.workflowJobs {
+					for _, job := range s.workflowJobs {
 						opts = append(opts, components.NativeSelectOption[string]{Value: job, Label: job})
 					}
-					if a.settings.Job != "" && !slices.Contains(a.workflowJobs, a.settings.Job) {
-						opts = append(opts, components.NativeSelectOption[string]{Value: a.settings.Job, Label: a.settings.Job})
+					if s.settings.Job != "" && !slices.Contains(s.workflowJobs, s.settings.Job) {
+						opts = append(opts, components.NativeSelectOption[string]{Value: s.settings.Job, Label: s.settings.Job})
 					}
-					components.NativeSelect(c, &a.settings.Job, opts).Trigger.FillWidth().Label("Job ID filter")
+					components.NativeSelect(c, &s.settings.Job, opts).Trigger.FillWidth().Label("Job ID filter")
 				})
 			})
 		})
-		if a.eventSel == "custom" {
-			input := components.TextBox(c, &a.eventOther, components.TextBoxOptions{}).Placeholder("event name").Label("Custom event name")
+		if s.eventSel == "custom" {
+			input := components.TextBox(c, &s.eventOther, components.TextBoxOptions{}).Placeholder("event name").Label("Custom event name")
 			styleConfigInput(c, input)
 			if input.Changed() {
-				a.settings.Event = a.eventOther
+				s.settings.Event = s.eventOther
 			}
 		}
 	})
 }
 
-func (a *App) imagesView(c *ui.Context) {
+func (s *Session) imagesView(c *ui.Context) {
 	t := c.Theme()
-	if len(a.settings.Platforms) > 0 {
+	if len(s.settings.Platforms) > 0 {
 		ui.Column(c).FillWidth().Radius(t.Radius).Border(1, sectionBorder(c)).Background(inputBackground(c)).Dividers(1, sectionBorder(c)).Children(func() {
-			for i := range a.settings.Platforms {
-				a.mappingRow(c, i)
+			for i := range s.settings.Platforms {
+				s.mappingRow(c, i)
 			}
 		})
 	}
 	if components.Button(c, "+ Add mapping", components.ButtonGhost).TextColor(t.Accent).Clicked() {
-		a.settings.Platforms = append(a.settings.Platforms, "=")
+		s.settings.Platforms = append(s.settings.Platforms, "=")
 	}
 	field(c, "Container architecture", func() {
 		values := []string{"linux/amd64", "linux/arm64", ""}
-		selected := slices.Index(values, a.settings.Arch)
+		selected := slices.Index(values, s.settings.Arch)
 		if selected < 0 {
-			styleConfigInput(c, components.TextBox(c, &a.settings.Arch, components.TextBoxOptions{}).Label("Container architecture"))
+			styleConfigInput(c, components.TextBox(c, &s.settings.Arch, components.TextBoxOptions{}).Label("Container architecture"))
 			return
 		}
 		segments := ui.Segmented(c, &selected, "amd64", "arm64", "Default").FillWidth().Label("Container architecture")
 		if segments.Changed() {
-			a.settings.Arch = values[selected]
+			s.settings.Arch = values[selected]
 		}
 	})
 }
@@ -182,49 +182,49 @@ func (a *App) imagesView(c *ui.Context) {
 // mappingRow is one runner=image pair inside the shared mappings group: the
 // runner label on the first line, the container image behind a branch arrow
 // on the second. Both stay plain editable text.
-func (a *App) mappingRow(c *ui.Context, i int) {
+func (s *Session) mappingRow(c *ui.Context, i int) {
 	t := c.Theme()
-	runner, image, _ := strings.Cut(a.settings.Platforms[i], "=")
+	runner, image, _ := strings.Cut(s.settings.Platforms[i], "=")
 	ui.Column(c.Key(i)).FillWidth().Gap(t.Space(0.75)).Padding(t.Space(2), t.Space(2.5)).Children(func() {
 		ui.Row(c).FillWidth().Gap(t.Space(1)).AlignItems(ui.Center).Children(func() {
 			input := ui.TextInputBase(c, &runner).Grow(1).MinWidth(0).Placeholder("ubuntu-latest").Label(fmt.Sprintf("Runner label %d", i+1))
 			input.Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(t.Text)
 			if input.Changed() {
-				a.settings.Platforms[i] = runner + "=" + image
+				s.settings.Platforms[i] = runner + "=" + image
 			}
 			remove := components.Button(c, "", components.ButtonGhost).Label(fmt.Sprintf("Remove mapping %d", i+1)).Size(t.Space(4), t.Space(4)).Padding(0).Shrink(0)
 			remove.Children(func() { components.Icon(c, lucide.X()).Size(t.Space(2.75), t.Space(2.75)).TextColor(t.TextMuted) })
-			remove.OnClick(func() { a.settings.Platforms = slices.Delete(a.settings.Platforms, i, i+1) })
+			remove.OnClick(func() { s.settings.Platforms = slices.Delete(s.settings.Platforms, i, i+1) })
 		})
 		ui.Row(c).FillWidth().Gap(t.Space(1.25)).AlignItems(ui.Center).Children(func() {
 			components.Icon(c, lucide.CornerDownRight()).Size(t.Space(2.75), t.Space(2.75)).TextColor(t.TextMuted.Alpha(0.7)).Shrink(0)
 			input := ui.TextInputBase(c, &image).Grow(1).MinWidth(0).Placeholder("catthehacker/ubuntu:act-latest").Label(fmt.Sprintf("Container image %d", i+1))
 			input.Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).TextColor(t.TextMuted)
 			if input.Changed() {
-				a.settings.Platforms[i] = runner + "=" + image
+				s.settings.Platforms[i] = runner + "=" + image
 			}
 		})
 	})
 }
 
-func (a *App) environmentSummary() string {
-	count := len(a.settings.Env) + len(a.settings.Vars) + len(a.settings.Inputs)
-	return fmt.Sprintf("%d secrets · %d vars", len(a.settings.Secrets), count)
+func (s *Session) environmentSummary() string {
+	count := len(s.settings.Env) + len(s.settings.Vars) + len(s.settings.Inputs)
+	return fmt.Sprintf("%d secrets · %d vars", len(s.settings.Secrets), count)
 }
 
-func (a *App) environmentView(c *ui.Context) {
+func (s *Session) environmentView(c *ui.Context) {
 	t := c.Theme()
 	labels := []string{"Secrets", "Env", "Vars", "Inputs"}
-	lists := []*[]string{&a.settings.Secrets, &a.settings.Env, &a.settings.Vars, &a.settings.Inputs}
+	lists := []*[]string{&s.settings.Secrets, &s.settings.Env, &s.settings.Vars, &s.settings.Inputs}
 	tabLabels := slices.Clone(labels)
 	for i, list := range lists {
 		if len(*list) > 0 {
 			tabLabels[i] += fmt.Sprintf(" %d", len(*list))
 		}
 	}
-	ui.Segmented(c, &a.envTab, tabLabels...).FillWidth().FontSize(t.Rem(11.0 / 13)).Label("Environment editor")
-	ui.Column(c.Key(a.envTab)).FillWidth().Gap(t.Space(3)).Children(func() {
-		list := lists[a.envTab]
+	ui.Segmented(c, &s.envTab, tabLabels...).FillWidth().FontSize(t.Rem(11.0 / 13)).Label("Environment editor")
+	ui.Column(c.Key(s.envTab)).FillWidth().Gap(t.Space(3)).Children(func() {
+		list := lists[s.envTab]
 		for i := range *list {
 			row := ui.Row(c.Key(i)).FillWidth().Gap(t.Space(1.5)).AlignItems(ui.Center)
 			row.Children(func() {
@@ -237,11 +237,11 @@ func (a *App) environmentView(c *ui.Context) {
 					*visibility = secretVisibility{value: (*list)[i]}
 				}
 				name, value, _ := strings.Cut((*list)[i], "=")
-				key := components.TextBox(c, &name, components.TextBoxOptions{}).Placeholder("NAME").Label(fmt.Sprintf("%s name %d", labels[a.envTab], i+1)).Grow(1).Basis(0).MinWidth(0)
+				key := components.TextBox(c, &name, components.TextBoxOptions{}).Placeholder("NAME").Label(fmt.Sprintf("%s name %d", labels[s.envTab], i+1)).Grow(1).Basis(0).MinWidth(0)
 				styleConfigInput(c, key)
-				input := components.TextBox(c, &value, components.TextBoxOptions{}).Placeholder("value").Label(fmt.Sprintf("%s value %d", labels[a.envTab], i+1)).Grow(1).Basis(0).MinWidth(0)
+				input := components.TextBox(c, &value, components.TextBoxOptions{}).Placeholder("value").Label(fmt.Sprintf("%s value %d", labels[s.envTab], i+1)).Grow(1).Basis(0).MinWidth(0)
 				styleConfigInput(c, input)
-				if a.envTab == 0 {
+				if s.envTab == 0 {
 					label, icon := "Show secret", lucide.Eye()
 					if visibility.show {
 						label, icon = "Hide secret", lucide.EyeOff()
@@ -259,32 +259,32 @@ func (a *App) environmentView(c *ui.Context) {
 					(*list)[i] = name + "=" + value
 					visibility.value = (*list)[i]
 				}
-				remove := components.Button(c, "", components.ButtonGhost).Label(fmt.Sprintf("Remove %s %d", labels[a.envTab], i+1)).Size(t.Space(5), t.Space(7)).Padding(0).Shrink(0)
+				remove := components.Button(c, "", components.ButtonGhost).Label(fmt.Sprintf("Remove %s %d", labels[s.envTab], i+1)).Size(t.Space(5), t.Space(7)).Padding(0).Shrink(0)
 				remove.Children(func() { components.Icon(c, lucide.X()).Size(t.Space(3), t.Space(3)) })
 				remove.OnClick(func() { *list = slices.Delete(*list, i, i+1) })
 			})
 		}
 		ui.Row(c).FillWidth().Gap(t.Space(1)).Children(func() {
-			addLabel := []string{"Add secret", "Add env", "Add var", "Add input"}[a.envTab]
+			addLabel := []string{"Add secret", "Add env", "Add var", "Add input"}[s.envTab]
 			if components.Button(c, "+ "+addLabel, components.ButtonGhost).TextColor(t.Accent).Clicked() {
 				*list = append(*list, "=")
 			}
-			if a.envTab < 3 && components.Button(c, "Import .env", components.ButtonGhost).TextColor(t.Accent).Clicked() {
-				a.pickConfigFile(labels[a.envTab])
+			if s.envTab < 3 && components.Button(c, "Import .env", components.ButtonGhost).TextColor(t.Accent).Clicked() {
+				s.pickConfigFile(labels[s.envTab])
 			}
 		})
-		if a.envTab < 3 {
-			file := []*string{&a.settings.SecretFile, &a.settings.EnvFile, &a.settings.VarFile}[a.envTab]
+		if s.envTab < 3 {
+			file := []*string{&s.settings.SecretFile, &s.settings.EnvFile, &s.settings.VarFile}[s.envTab]
 			field(c, "Loaded file", func() {
-				styleConfigInput(c, components.TextBox(c, file, components.TextBoxOptions{}).Placeholder("No file selected").Label(labels[a.envTab]+" file"))
+				styleConfigInput(c, components.TextBox(c, file, components.TextBoxOptions{}).Placeholder("No file selected").Label(labels[s.envTab]+" file"))
 			})
 		}
 	})
 }
 
-func (a *App) optionCount() int {
+func (s *Session) optionCount() int {
 	n := 0
-	for _, on := range []bool{a.settings.DryRun, a.settings.Verbose, a.settings.Pull, a.settings.Reuse, a.settings.Bind, a.settings.Quiet} {
+	for _, on := range []bool{s.settings.DryRun, s.settings.Verbose, s.settings.Pull, s.settings.Reuse, s.settings.Bind, s.settings.Quiet} {
 		if on {
 			n++
 		}
@@ -292,42 +292,55 @@ func (a *App) optionCount() int {
 	return n
 }
 
-func (a *App) commandPreview(c *ui.Context) {
+func (s *Session) commandPreview(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).FillWidth().Shrink(0).Padding(t.Space(4)).Gap(t.Space(3)).BorderWidth(1, 0, 0, 0).BorderColor(sectionBorder(c)).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 			components.Text(c, "Command preview").FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted).Grow(1)
-			if components.Button(c, "Save", components.ButtonSecondary).Label("Save settings to .actrc").Disabled(a.settings.Dir == "").Clicked() {
-				a.fileErr = ""
-				if err := a.settings.SaveActrc(); err != nil {
-					a.fileErr = err.Error()
+			if components.Button(c, "Save", components.ButtonSecondary).Label("Save settings to .actrc").Disabled(s.settings.Dir == "").Clicked() {
+				s.fileErr = ""
+				if err := s.settings.SaveActrc(); err != nil {
+					s.fileErr = err.Error()
 				}
 			}
 			copyButton := components.Button(c, "", components.ButtonGhost).Label("Copy command").Size(t.Space(6), t.Space(5)).Padding(0)
 			copyButton.Children(func() { components.Icon(c, lucide.Copy()).Size(t.Space(3.25), t.Space(3.25)).TextColor(t.TextMuted) })
 			if copyButton.Clicked() {
-				c.WriteClipboard(a.cmdline())
+				c.WriteClipboard(s.cmdline())
 			}
 		})
 		ui.Themed(c, logTheme(c)).FillWidth().Padding(t.Space(2.5), t.Space(3)).Radius(t.Radius).Border(1, sectionBorder(c)).Children(func() {
-			components.Text(c, a.cmdline()).Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).MaxLines(3).Ellipsis("…").Selectable()
+			components.Text(c, s.cmdline()).Font("JetBrains Mono").FontSize(t.Rem(11.0 / 13)).MaxLines(3).Ellipsis("…").Selectable()
 		})
-		if _, err := a.settings.Args(); err != nil {
+		if _, err := s.settings.Args(); err != nil {
 			components.Text(c, err.Error()).FontSize(t.Rem(11.0 / 13)).TextColor(t.Danger)
 		}
-		if len(a.settings.ActrcFiles) > 0 {
+		if len(s.settings.ActrcFiles) > 0 {
 			ui.Row(c).FillWidth().Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
 				components.Icon(c, lucide.FileText()).Size(t.Space(3.25), t.Space(3.25)).TextColor(t.TextMuted)
 				components.Text(c, "Defaults from .actrc").FontSize(t.Rem(12.0 / 13)).TextColor(t.TextMuted).Grow(1)
 				if components.Button(c, "View", components.ButtonGhost).TextColor(t.Accent).Padding(0).Clicked() {
-					a.showDefaults = !a.showDefaults
+					s.showDefaults = !s.showDefaults
 				}
 			})
-			if a.showDefaults {
-				for _, file := range a.settings.ActrcFiles {
+			if s.showDefaults {
+				for _, file := range s.settings.ActrcFiles {
 					components.Text(c, abbrevHome(file)).FontSize(t.Rem(11.0 / 13)).TextColor(t.TextMuted)
 				}
 			}
 		}
 	})
+}
+
+// toggleWorkflow adds or removes a workflow from the selection, keeping the
+// project's file order.
+func (s *Session) toggleWorkflow(workflow string, selected bool) {
+	var next []string
+	for _, name := range s.workflows {
+		if name == workflow && selected || name != workflow && slices.Contains(s.settings.Workflows, name) {
+			next = append(next, name)
+		}
+	}
+	s.settings.Workflows = next
+	s.loadWorkflow()
 }

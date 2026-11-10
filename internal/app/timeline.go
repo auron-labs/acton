@@ -53,7 +53,7 @@ func walkSteps(steps []*act.Step, visit func(*act.Step)) {
 	}
 }
 
-func (a *App) stepSummary(c *ui.Context, j *act.Job) {
+func (s *Session) stepSummary(c *ui.Context, j *act.Job) {
 	t := c.Theme()
 	total, passed, failed, slow := 0, 0, 0, 0
 	walkSteps(j.Steps, func(s *act.Step) {
@@ -76,7 +76,7 @@ func (a *App) stepSummary(c *ui.Context, j *act.Job) {
 		for i, label := range []string{fmt.Sprintf("All %d steps", total), fmt.Sprintf("%d passed", passed), fmt.Sprintf("%d failed", failed), fmt.Sprintf("%d slow · over 30s", slow)} {
 			f := stepFilter(i)
 			button := components.Button(c, label, components.ButtonGhost).FontSize(11).Radius(12).Padding(3, 9)
-			if a.logUI.filter == f {
+			if s.logUI.filter == f {
 				button.Background(t.SurfaceHover).Border(1, t.Border).Label(label + " (selected)")
 			}
 			switch f {
@@ -90,7 +90,7 @@ func (a *App) stepSummary(c *ui.Context, j *act.Job) {
 				button.TextColor(t.Warning)
 			}
 			button.OnClick(func() {
-				a.logUI.filter = f
+				s.logUI.filter = f
 				if f != filterAll {
 					walkSteps(j.Steps, func(s *act.Step) {
 						if len(s.Children) > 0 && f.matches(s) {
@@ -112,12 +112,12 @@ func (a *App) stepSummary(c *ui.Context, j *act.Job) {
 			walkSteps(j.Steps, func(s *act.Step) { s.Open = false; s.UserToggled = true })
 		}
 		if failed > 0 && components.Button(c, "Jump to failure", components.ButtonOutline).FontSize(11).TextColor(t.Danger).Clicked() {
-			a.jumpToFailure(j)
+			s.jumpToFailure(j)
 		}
 	})
 }
 
-func (a *App) jumpToFailure(j *act.Job) {
+func (s *Session) jumpToFailure(j *act.Job) {
 	var failed *act.Step
 	walkSteps(j.Steps, func(s *act.Step) {
 		if failed == nil && len(s.Children) == 0 && s.Status == act.StatusFailure {
@@ -127,14 +127,14 @@ func (a *App) jumpToFailure(j *act.Job) {
 	if failed == nil {
 		return
 	}
-	a.logUI.filter = filterAll
+	s.logUI.filter = filterAll
 	for s := failed; s != nil; s = s.Parent {
 		s.Open = true
 		s.UserToggled = true
 	}
 	for i, row := range flatRows(j, filterAll) {
 		if row.step == failed {
-			a.logUI.list.ScrollTo(i, ui.Start)
+			s.logUI.list.ScrollTo(i, ui.Start)
 			return
 		}
 	}
@@ -204,7 +204,7 @@ func drawBracket(p *ui.Painter, r ui.Rect, color ui.Color) {
 	}
 }
 
-func (a *App) stepHeaderRow(c *ui.Context, row rowRef, axis timeAxis) {
+func stepHeaderRow(c *ui.Context, row rowRef, axis timeAxis) {
 	s := row.step
 	t := c.Theme()
 	color := t.TextMuted
@@ -298,43 +298,43 @@ func stepOutputHeader(c *ui.Context, s *act.Step, tab *int) {
 	})
 }
 
-func (a *App) stepOutput(c *ui.Context, row rowRef) {
-	s := row.step
-	if a.logUI.output == nil {
-		a.logUI.output = map[*act.Step]*components.ListState{}
+func (s *Session) stepOutput(c *ui.Context, row rowRef) {
+	step := row.step
+	if s.logUI.output == nil {
+		s.logUI.output = map[*act.Step]*components.ListState{}
 	}
-	state := a.logUI.output[s]
+	state := s.logUI.output[step]
 	if state == nil {
 		state = &components.ListState{}
-		a.logUI.output[s] = state
+		s.logUI.output[step] = state
 	}
-	state.FollowEnd = s.Status == act.StatusRunning
-	if a.logUI.tabs == nil {
-		a.logUI.tabs = map[*act.Step]*int{}
+	state.FollowEnd = step.Status == act.StatusRunning
+	if s.logUI.tabs == nil {
+		s.logUI.tabs = map[*act.Step]*int{}
 	}
-	tab := a.logUI.tabs[s]
+	tab := s.logUI.tabs[step]
 	if tab == nil {
 		tab = new(int)
-		a.logUI.tabs[s] = tab
+		s.logUI.tabs[step] = tab
 	}
 	lines := 0
-	for _, line := range s.Lines {
+	for _, line := range step.Lines {
 		lines += strings.Count(line, "\n") + 1
 	}
-	height := min(320, max(100, float32(max(lines, len(s.Annotations)*3))*18+42))
+	height := min(320, max(100, float32(max(lines, len(step.Annotations)*3))*18+42))
 	outputTheme := logTheme(c)
 	background := outputTheme.Background
-	if len(s.Annotations) > 0 && *tab == 0 {
+	if len(step.Annotations) > 0 && *tab == 0 {
 		outputTheme = c.Theme()
 		background = panelBackground(c)
 	}
 	ui.Column(c).FillWidth().Padding(3, 12, 8, 76+float32(row.depth)*20).Children(func() {
 		ui.Themed(c, outputTheme).FillWidth().Height(height).Shrink(0).Background(background).Radius(6).Border(1, outputTheme.Border).Clip().Children(func() {
-			stepOutputHeader(c, s, tab)
-			if len(s.Annotations) > 0 && *tab == 0 {
-				components.ScrollView(c, components.ScrollViewOptions{}).Fill().MinHeight(0).Children(func() { annotationList(c, s.Annotations) })
+			stepOutputHeader(c, step, tab)
+			if len(step.Annotations) > 0 && *tab == 0 {
+				components.ScrollView(c, components.ScrollViewOptions{}).Fill().MinHeight(0).Children(func() { annotationList(c, step.Annotations) })
 			} else {
-				components.List(c, state, len(s.Lines), func(i int) { a.logLineRow(c, rowRef{step: s, line: s.Lines[i]}) }).Fill().MinHeight(0)
+				components.List(c, state, len(step.Lines), func(i int) { s.logLineRow(c, rowRef{step: step, line: step.Lines[i]}) }).Fill().MinHeight(0)
 			}
 		})
 	})

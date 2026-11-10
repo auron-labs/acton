@@ -11,12 +11,12 @@ import (
 )
 
 func TestOverviewNavigationAndAnnotations(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = "/tmp/project"
 	a.workflows = []string{"ci.yml"}
 	j := &act.Job{Key: "build", Name: "build", Annotations: []act.Annotation{{Severity: "error", File: "src/main.go", Line: "12", Message: "broken"}}}
 	a.run.Jobs = []*act.Job{j}
-	tt := ui.NewTester(func(c *ui.Context) { c.SetTheme(designTheme(c)); a.view(c) }, 1200, 800)
+	tt := ui.NewTester(func(c *ui.Context) { c.SetTheme(designTheme(c)); a.app.view(c) }, 1200, 800)
 	if err := tt.Click("Overview"); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestOverviewNavigationAndAnnotations(t *testing.T) {
 }
 
 func TestLiveStepOutputRetainsManualScroll(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	s := &act.Step{Name: "stream", Status: act.StatusRunning, Open: true, Started: time.Now()}
 	for i := range 100 {
 		s.Lines = append(s.Lines, fmt.Sprintf("line %03d", i))
@@ -64,7 +64,7 @@ func TestLiveStepOutputRetainsManualScroll(t *testing.T) {
 func TestRawAndRunnerOutputScroll(t *testing.T) {
 	for _, mode := range []string{"raw", "runner"} {
 		t.Run(mode, func(t *testing.T) {
-			a := newApp()
+			a := newTestSession()
 			j := &act.Job{}
 			for i := range 100 {
 				line := fmt.Sprintf("entry %03d", i)
@@ -102,7 +102,7 @@ func TestRawAndRunnerOutputScroll(t *testing.T) {
 func TestStepOutputThemeAndCopy(t *testing.T) {
 	for _, problems := range []bool{false, true} {
 		t.Run(fmt.Sprintf("problems=%t", problems), func(t *testing.T) {
-			a := newApp()
+			a := newTestSession()
 			s := &act.Step{Name: "test", Lines: []string{"first", "", "last"}}
 			if problems {
 				s.Annotations = []act.Annotation{{Severity: "error", Message: "broken"}}

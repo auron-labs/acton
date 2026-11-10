@@ -24,8 +24,8 @@ func TestMCPDesktopControl(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), []byte(workflow), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a := newApp()
-	a.setDir(dir)
+	app := newApp()
+	a := app.openProject(dir)
 	a.settings.Secrets = []string{"TOKEN=private-fixture"}
 	a.settings.ExtraArgs = "--secret=INLINE=extra-fixture"
 	queue := make(chan func(), 16)
@@ -36,10 +36,10 @@ func TestMCPDesktopControl(t *testing.T) {
 			action()
 		}
 	}()
-	server := httptest.NewServer(a.mcpHandler(func(action func()) { queue <- action }))
+	server := httptest.NewServer(app.mcpHandler(func(action func()) { queue <- action }))
 	t.Cleanup(func() {
 		server.Close()
-		queue <- a.shutdown
+		queue <- app.shutdown
 		close(queue)
 		<-finished
 	})
@@ -137,9 +137,9 @@ func TestMCPRejectsCrossOriginRequests(t *testing.T) {
 }
 
 func TestMCPRejectsRunWithoutWorkflows(t *testing.T) {
-	a := newApp()
-	a.setDir(t.TempDir())
-	server := httptest.NewServer(a.mcpHandler(func(action func()) { action() }))
+	app := newApp()
+	a := app.openProject(t.TempDir())
+	server := httptest.NewServer(app.mcpHandler(func(action func()) { action() }))
 	t.Cleanup(server.Close)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: server.URL + "/mcp"}, nil)
@@ -178,4 +178,88 @@ func TestMCPQueuedRequestCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("request after shutdown did not return")
 	}
+}
+
+func TestMCPDrivesMultipleProjects(t *testing.T) {
+	app := newApp()
+	first := app.openProject(newProject(t, "api"))
+	secondDir := newProject(t, "web")
+	server := httptest.NewServer(app.mcpHandler(func(action func()) { action() }))
+	t.Cleanup(func() {
+		server.Close()
+		app.shutdown()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL + "/mcp"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	call := func(name string, args map[string]any, wantError bool) string {
+		t.Helper()
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError != wantError || len(result.Content) == 0 {
+			t.Fatalf("%s %v: unexpected result %+v", name, args, result)
+		}
+		return result.Content[0].(*mcp.TextContent).Text
+	}
+	call("get_settings", map[string]any{"project": secondDir}, true)
+	call("start_run", map[string]any{"project": "relative/dir"}, true)
+	call("start_run", map[string]any{"project": filepath.Join(t.TempDir(), "missing")}, true)
+	// Updating an unopened project opens it without taking focus from the selected tab.
+	call("update_settings", map[string]any{"project": secondDir, "patch": map[string]any{"DryRun": true}}, false)
+	second := app.sessionFor(secondDir)
+	if second == nil || !second.settings.DryRun || app.current != first || first.settings.DryRun {
+		t.Fatalf("settings applied to the wrong project: second=%v current=%v", second, app.current)
+	}
+	call("update_settings", map[string]any{"patch": map[string]any{"DryRun": true}}, false)
+	call("update_settings", map[string]any{"patch": map[string]any{"Dir": secondDir}}, true)
+	call("start_run", map[string]any{"project": secondDir}, false)
+	call("start_run", map[string]any{}, false)
+	if !first.running || !second.running {
+		t.Fatal("runs for different projects did not overlap")
+	}
+	call("start_run", map[string]any{"project": secondDir}, true)
+	for _, dir := range []string{first.settings.Dir, secondDir} {
+		for {
+			var run runSnapshot
+			//nolint:musttag // The nested act model uses its established exported field names.
+			if err := json.Unmarshal([]byte(call("get_run", map[string]any{"project": dir}, false)), &run); err != nil {
+				t.Fatal(err)
+			}
+			if run.Status != "Running" {
+				if run.Status != "Succeeded" || run.Project != dir {
+					t.Fatalf("run for %s: %+v", dir, run)
+				}
+				break
+			}
+			select {
+			case <-time.After(10 * time.Millisecond):
+			case <-ctx.Done():
+				t.Fatal("MCP run did not finish")
+			}
+		}
+	}
+	var all struct {
+		Runs []runSnapshot `json:"runs"`
+	}
+	//nolint:musttag // The nested act model uses its established exported field names.
+	if err := json.Unmarshal([]byte(call("list_runs", map[string]any{}, false)), &all); err != nil || len(all.Runs) != 2 || all.Runs[0].ID == all.Runs[1].ID {
+		t.Fatalf("runs across projects: %+v, %v", all, err)
+	}
+	//nolint:musttag // The nested act model uses its established exported field names.
+	if err := json.Unmarshal([]byte(call("list_runs", map[string]any{"project": secondDir}, false)), &all); err != nil || len(all.Runs) != 1 || all.Runs[0].Project != secondDir {
+		t.Fatalf("project filter: %+v, %v", all, err)
+	}
+	if saved := call("get_run", map[string]any{"id": second.runID}, false); !strings.Contains(saved, secondDir) {
+		t.Fatal("run lookup by id ignored its project")
+	}
+	call("stop_run", map[string]any{"project": secondDir}, false)
+	app.current = nil
+	call("get_settings", map[string]any{}, true) // Two tabs open and none selected: the project must be named.
 }

@@ -18,9 +18,20 @@ From the repository root:
 go tool mygo dev
 ```
 
-Choose a project folder containing `.github/workflows`, select a workflow, and
-click **Run**. Jobs, steps, and output appear as the workflow runs. Acton loads
-defaults from `.actrc`; use **Save** to write settings to the project's `.actrc`.
+Choose a project folder containing `.github/workflows`, tick the workflows to run
+(none selected runs every workflow triggered by the event), and click **Run**.
+Jobs, steps, and output appear as the workflow runs. Acton loads defaults from
+`.actrc`; use **Save** to write settings to the project's `.actrc`, which stores
+each selected workflow as a `-W` line.
+
+Each project opens in its own tab, and tabs can run at the same time. The **Home**
+tab lists every open project with its run status, and shows how many runs are in
+progress. A tab can be closed once its run has finished. Every run executes in a
+helper process (the Acton executable started with `--act-worker`), so concurrent
+projects don't share environment or logger state.
+
+Select **Workflow** under Jobs to read the source of the workflow files the run
+executes while it runs.
 
 Select **Overview** under Jobs to read GitHub Actions errors, warnings, and
 notices grouped by job and file. Each step's **Problems** tab shows its own
@@ -59,19 +70,25 @@ desktop app.
 
 | Tool | Action |
 | --- | --- |
-| `list_runs` | List runs from the current desktop session. |
-| `get_run` | Read jobs, steps, output, and errors. Omit `id` for the latest run. |
-| `start_run` | Run the selected project with the current desktop settings. |
-| `stop_run` | Cancel the active run and allow cleanup to finish. |
+| `list_runs` | List runs from the current desktop session across all projects. |
+| `get_run` | Read jobs, steps, output, and errors. Omit `id` for the project's latest run. |
+| `start_run` | Run a project with its current desktop settings. |
+| `stop_run` | Cancel a project's active run and allow cleanup to finish. |
 | `get_settings` | Read settings with inline secrets redacted. |
 | `update_settings` | Apply a settings `patch` in memory. |
 
+Every tool except `get_run` with an `id` accepts an optional absolute `project`
+directory; it defaults to the selected tab. `update_settings` and `start_run` open
+a tab for a project that isn't open yet without switching to it. Runs for different
+projects can overlap, and each project accepts one run at a time.
+
 For example, call `update_settings` with
-`{"patch":{"DryRun":true,"Event":"push"}}`, then `start_run` with `{}`.
+`{"project":"/path/to/app","patch":{"DryRun":true,"Event":"push","Workflows":[".github/workflows/ci.yml"]}}`,
+then `start_run` with `{"project":"/path/to/app"}`.
 Omitted settings stay unchanged. Omit redacted secret fields instead of sending
-their display values back. Settings changes and concurrent starts are rejected
-while a run is active. Use the desktop **Save** button to persist workflow
-settings to `.actrc`.
+their display values back. Settings changes and concurrent starts for a project
+are rejected while its run is active. Use the desktop **Save** button to persist
+workflow settings to `.actrc`.
 
 ## Build
 

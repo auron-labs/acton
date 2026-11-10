@@ -38,9 +38,9 @@ jobs:
         run: printf 'hello\n'
 `
 
-func startRunner(t *testing.T, dir string, args []string, flush func()) (*Runner, <-chan struct{}) {
+func startRunner(t *testing.T, dir string, args []string, flush func()) (*engine, <-chan struct{}) {
 	t.Helper()
-	r := &Runner{}
+	r := &engine{}
 	complete := make(chan struct{})
 	if err := r.Start(dir, args, flush, func() { close(complete) }); err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func startRunner(t *testing.T, dir string, args []string, flush func()) (*Runner
 	return r, complete
 }
 
-func finishRunner(t *testing.T, r *Runner, complete <-chan struct{}) ([]string, error) {
+func finishRunner(t *testing.T, r *engine, complete <-chan struct{}) ([]string, error) {
 	t.Helper()
 	select {
 	case <-complete:
@@ -88,7 +88,7 @@ func TestRunnerDoneWaitsForOutput(t *testing.T) {
 	if done || err != nil {
 		t.Fatalf("premature completion: done=%v err=%v", done, err)
 	}
-	var second Runner
+	var second engine
 	if err := second.Start(dir, nil, func() {}, func() {}); err == nil {
 		t.Fatal("accepted concurrent embedded execution")
 	}
@@ -158,7 +158,7 @@ func TestRunnerStop(t *testing.T) {
 	dir := workflowProject(t, strings.Replace(testWorkflow, `printf 'hello\n'`, `printf 'waiting\n'; exec sleep 60`, 1))
 	waiting := make(chan struct{})
 	var once sync.Once
-	var r *Runner
+	var r *engine
 	// The log callback runs only after Start has returned and assigned r.
 	started := make(chan struct{})
 	r, complete := startRunner(t, dir, []string{"push", "-P", "ubuntu-latest=-self-hosted", "--no-cache-server", "--action-cache-path", t.TempDir()}, func() {
@@ -208,7 +208,7 @@ func TestRunnerErrors(t *testing.T) {
 }
 
 func TestRunnerLargeOutput(t *testing.T) {
-	r := &Runner{onFlush: func() {}, level: logrus.InfoLevel}
+	r := &engine{onFlush: func() {}, level: logrus.InfoLevel}
 	logger := r.WithJobLogger()
 	message := strings.Repeat("x", 4<<20)
 	logger.Info(message)

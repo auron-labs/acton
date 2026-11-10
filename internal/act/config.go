@@ -18,7 +18,8 @@ import (
 // options translates the existing settings/extra-args contract into act's Go API.
 type options struct {
 	config                                                           runner.Config
-	workflows, job                                                   string
+	workflows                                                        []string
+	job                                                              string
 	dryrun, verbose, noRecurse, strict                               bool
 	envFile, secretFile, varFile, inputFile                          string
 	filesRequired                                                    [4]bool
@@ -41,7 +42,7 @@ func parseOptions(dir string, args []string) (*options, error) {
 	f := pflag.NewFlagSet("embedded act", pflag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVarP(&c.Workdir, "directory", "C", ".", "")
-	f.StringVarP(&o.workflows, "workflows", "W", ".github/workflows", "")
+	f.StringArrayVarP(&o.workflows, "workflows", "W", nil, "")
 	f.StringVarP(&o.job, "job", "j", "", "")
 	f.StringVarP(&c.Actor, "actor", "a", "nektos/act", "")
 	f.StringVarP(&c.EventPath, "eventpath", "e", "", "")
@@ -129,7 +130,12 @@ func parseOptions(dir string, args []string) (*options, error) {
 	if err != nil {
 		return nil, fmt.Errorf("working directory: %w", err)
 	}
-	o.workflows = resolvePath(c.Workdir, o.workflows)
+	if len(o.workflows) == 0 {
+		o.workflows = []string{".github/workflows"}
+	}
+	for i, workflow := range o.workflows {
+		o.workflows[i] = resolvePath(c.Workdir, workflow)
+	}
 	c.EventPath = resolvePath(c.Workdir, c.EventPath)
 	c.ActionCacheDir = resolvePath(c.Workdir, c.ActionCacheDir)
 	c.ArtifactServerPath = resolvePath(c.Workdir, c.ArtifactServerPath)

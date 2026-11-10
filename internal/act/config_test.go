@@ -10,7 +10,7 @@ import (
 func TestOptionsSettings(t *testing.T) {
 	dir := t.TempDir()
 	s := settings.Default(dir)
-	s.Workflow = "ci.yml"
+	s.Workflows = []string{"ci.yml"}
 	s.Job = "build"
 	s.DryRun, s.Reuse, s.Bind, s.Quiet, s.Verbose = true, true, true, true, true
 	s.Env = []string{"MESSAGE=hello world"}
@@ -31,7 +31,7 @@ func TestOptionsSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &o.config
-	if c.Workdir != dir || o.workflows != filepath.Join(dir, "ci.yml") || c.EventPath != filepath.Join(dir, "event.json") || o.job != "build" {
+	if c.Workdir != dir || len(o.workflows) != 1 || o.workflows[0] != filepath.Join(dir, "ci.yml") || c.EventPath != filepath.Join(dir, "event.json") || o.job != "build" {
 		t.Fatalf("paths/filter: %+v", o)
 	}
 	if !o.dryrun || !o.verbose || !c.ReuseContainers || !c.BindWorkdir || c.LogOutput || c.ForcePull || !c.JSONLogger {
@@ -138,5 +138,46 @@ func TestOptionsDisabledDefaultFiles(t *testing.T) {
 	}
 	if len(o.config.Env)+len(o.config.Secrets)+len(o.config.Vars) != 0 || o.config.ForcePull {
 		t.Fatal("disabled defaults were enabled")
+	}
+}
+
+func TestPlanMergesSelectedWorkflows(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.yml", "name: A\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo a\n")
+	write("b.yml", "name: B\non: push\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo b\n")
+	write("c.yml", "name: C\non: pull_request\njobs:\n  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo c\n")
+	jobs := func(args ...string) (int, error) {
+		t.Helper()
+		o, err := parseOptions(dir, append([]string{"push"}, args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := o.plan(o.config.EventName)
+		if err != nil {
+			return 0, err
+		}
+		n := 0
+		for _, stage := range plan.Stages {
+			n += len(stage.Runs)
+		}
+		return n, nil
+	}
+	if n, err := jobs("-W", "a.yml", "-W", "b.yml"); err != nil || n != 2 {
+		t.Fatalf("two workflows: %d jobs, %v", n, err)
+	}
+	if n, err := jobs("-W", "a.yml", "-W", "c.yml"); err != nil || n != 1 {
+		t.Fatalf("event filters unrelated workflow: %d jobs, %v", n, err)
+	}
+	if n, err := jobs("-W", "a.yml", "-W", "b.yml", "-j", "lint"); err != nil || n != 1 {
+		t.Fatalf("job filter: %d jobs, %v", n, err)
+	}
+	if n, err := jobs("-W", "a.yml", "-W", "b.yml", "-j", "missing"); err != nil || n != 0 {
+		t.Fatalf("missing job: %d jobs, %v", n, err)
 	}
 }

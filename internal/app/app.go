@@ -1,113 +1,54 @@
-// Package app is the Acton application: the window's state, the views that
-// render it, and the act runs it launches.
+// Package app is the Acton application: the window, its project tabs, and the
+// act runs they launch.
 package app
 
 import (
 	"acton/internal/act"
-	"acton/internal/settings"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strings"
-	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/kballard/go-shellquote"
-	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/shells/plain"
-	"gopkg.in/yaml.v3"
 )
 
-// App is the application's state. Views are pure functions of it; act output
-// arrives through runner → pump on the main thread.
+// App is the window: the open project sessions plus the state they share.
 type App struct {
 	win *mygo.Window
 
-	settings     settings.Settings
-	eventSel     string // event dropdown value; "custom" reveals a text field
-	eventOther   string
-	workflows    []string
-	workflowJobs []string
-	workflowMeta string
-	workflowErr  string
-	configOpen   [4]bool
-	envTab       int
-	showDefaults bool
-	fileErr      string
+	sessions []*Session
+	current  *Session // the selected tab; nil shows Home
 
-	run     act.Run
-	runner  *act.Runner
-	running bool
-	runErr  string // start or exit error
-	elapsed time.Duration
-	started time.Time
+	done      chan struct{}
+	mcpServer *http.Server
 
-	flushScheduled atomic.Bool
-	done           chan struct{}
+	history   []runSnapshot // runs cleared from their session
+	nextRunID int
 
-	selJob  string // "" auto-selects the first job
-	logMode int    // 0 steps, 1 raw log
-
-	cfgW    float32 // config pane width
-	jobW    float32 // jobs pane width
-	logUI   logUIState
-	rawLogs map[*act.Job]*rawLog
-
-	mcpServer           *http.Server
-	runID               int
-	nextRunID           int
-	runDir              string
-	history             []runSnapshot
 	preferences         preferences
 	preferencesPath     string
 	preferencesOpen     bool
 	preferenceErr       string
-	runFiles            *runFiles
 	notificationPending bool
 	shuttingDown        bool
-	notifyTest          func(act.Status)
+	notifyTest          func(*Session, act.Status)
 
 	recent     []string // recently opened project dirs, newest first
 	recentPath string   // "" disables persistence
 }
 
-// logUIState holds view-scoped widget state for the log pane.
-type logUIState struct {
-	list   components.ListState
-	runner components.ListState
-	filter stepFilter
-	output map[*act.Step]*components.ListState
-	tabs   map[*act.Step]*int
-}
-
-// rawLog keeps a job's raw-output scroll position across frames.
-type rawLog struct {
-	list components.ListState
-}
-
-// rawLogFor returns the job's persistent raw-output view state.
-func (a *App) rawLogFor(j *act.Job) *rawLog {
-	if a.rawLogs == nil {
-		a.rawLogs = map[*act.Job]*rawLog{}
-	}
-	rl := a.rawLogs[j]
-	if rl == nil {
-		rl = &rawLog{}
-		a.rawLogs[j] = rl
-	}
-	return rl
+func newApp() *App {
+	return &App{done: make(chan struct{})}
 }
 
 // Run starts the desktop app: it builds the window's shell once mygo is
 // ready, wires the lifecycle, and blocks in the event loop until done. dir,
-// when set, preselects the project; runNow starts act immediately.
+// when set, opens that project; runNow starts act immediately.
 func Run(dir string, runNow bool, mcpAddr string) error {
 	if err := registerFonts(); err != nil {
 		return err
@@ -132,7 +73,7 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 		}
 	}()
 	if dir != "" {
-		a.setDir(dir)
+		a.openProject(dir)
 	}
 	var startupErr error
 	mygo.App.WhenReady(func() {
@@ -153,7 +94,9 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 		a.win = shell.Window()
 		a.win.OnReadyToShow(a.win.Show)
 		a.win.OnClosed(func() {
-			a.stopRun()
+			for _, s := range a.sessions {
+				s.stopRun()
+			}
 			mygo.App.Quit()
 		})
 		if mcpAddr != "" {
@@ -163,8 +106,8 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 				return
 			}
 		}
-		if runNow {
-			a.startRun()
+		if runNow && a.current != nil {
+			a.current.startRun()
 		}
 	})
 	if err := mygo.App.Run(); err != nil {
@@ -173,22 +116,75 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 	return startupErr
 }
 
-func newApp() *App {
-	a := &App{
-		settings: *settings.Default(""),
-		eventSel: "push",
-		cfgW:     320,
-		jobW:     240,
-		done:     make(chan struct{}),
+// canonicalDir resolves symlinks so one project is never opened twice.
+func canonicalDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
 	}
-	a.logUI.list.FollowEnd = true
-	a.logUI.runner.FollowEnd = true
-	a.logUI.runner.Key = func(i int) any { return i }
-	return a
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
+// sessionFor returns the open session for a project directory.
+func (a *App) sessionFor(dir string) *Session {
+	want := canonicalDir(dir)
+	for _, s := range a.sessions {
+		if canonicalDir(s.settings.Dir) == want {
+			return s
+		}
+	}
+	return nil
+}
+
+// addSession opens a tab for the project without selecting it. Each project
+// has one tab because its runs share Docker resources.
+func (a *App) addSession(dir string) *Session {
+	s := a.sessionFor(dir)
+	if s == nil {
+		s = newSession(a)
+		s.setDir(dir)
+		a.sessions = append(a.sessions, s)
+	}
+	return s
+}
+
+// openProject selects the project's tab, opening one when needed.
+func (a *App) openProject(dir string) *Session {
+	a.current = a.addSession(dir)
+	return a.current
+}
+
+// closeSession removes an idle project tab.
+func (a *App) closeSession(s *Session) {
+	if s.running {
+		return
+	}
+	s.clearRun()
+	i := slices.Index(a.sessions, s)
+	a.sessions = slices.Delete(a.sessions, i, i+1)
+	if a.current == s {
+		a.current = nil
+		if len(a.sessions) > 0 {
+			a.current = a.sessions[min(i, len(a.sessions)-1)]
+		}
+	}
+}
+
+func (a *App) runningCount() int {
+	n := 0
+	for _, s := range a.sessions {
+		if s.running {
+			n++
+		}
+	}
+	return n
 }
 
 // pickFolder opens the native directory picker off the UI thread, then
-// applies the choice (including .actrc defaults) on it.
+// opens the chosen project on it.
 func (a *App) pickFolder() {
 	if a.win == nil {
 		return
@@ -203,336 +199,28 @@ func (a *App) pickFolder() {
 			if err != nil || len(paths) == 0 {
 				return
 			}
-			a.setDir(paths[0])
+			a.openProject(paths[0])
 		})
 	}()
 }
 
-// setDir points the app at a project: reload .actrc defaults and workflows.
-func (a *App) setDir(dir string) {
-	keep := a.settings.ExtraArgs
-	a.settings = *settings.Default(dir)
-	a.settings.ExtraArgs = keep
-	a.settings.LoadActrc()
-	a.clearRun()
-	a.eventSel = a.settings.Event
-	a.eventOther = a.settings.Event
-	if !contains(workflowEvents, a.eventSel) {
-		a.eventSel = "custom"
-	}
-	a.fileErr = ""
-	a.rescanWorkflows()
-	a.rememberProject(dir)
-}
-
-// loadWorkflow refreshes the selector metadata only when the target changes.
-func (a *App) loadWorkflow() {
-	a.workflowJobs, a.workflowMeta, a.workflowErr = nil, "", ""
-	if a.settings.Workflow == "" {
-		a.workflowMeta = fmt.Sprintf("%d workflows", len(a.workflows))
-		return
-	}
-	path := a.settings.Workflow
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(a.settings.Dir, path)
-	}
-	//nolint:gosec // G304: the native project picker and workflow menu select this local file.
-	data, err := os.ReadFile(path)
-	var workflow struct {
-		Jobs map[string]yaml.Node `yaml:"jobs"`
-		On   yaml.Node            `yaml:"on"`
-	}
-	if err == nil {
-		err = yaml.Unmarshal(data, &workflow)
-	}
-	if err != nil {
-		a.workflowErr = "Cannot read workflow: " + err.Error()
-		return
-	}
-	for id := range workflow.Jobs {
-		a.workflowJobs = append(a.workflowJobs, id)
-	}
-	slices.Sort(a.workflowJobs)
-	events := []string{}
-	switch workflow.On.Kind {
-	case yaml.ScalarNode:
-		events = append(events, workflow.On.Value)
-	case yaml.SequenceNode:
-		for _, event := range workflow.On.Content {
-			events = append(events, event.Value)
-		}
-	case yaml.MappingNode:
-		for i := 0; i < len(workflow.On.Content); i += 2 {
-			events = append(events, workflow.On.Content[i].Value)
-		}
-	case yaml.DocumentNode, yaml.AliasNode:
-	}
-	a.workflowMeta = fmt.Sprintf("%d jobs", len(a.workflowJobs))
-	if len(events) > 0 {
-		a.workflowMeta += " · on " + strings.Join(events, ", ")
-	}
-}
-
-// rescanWorkflows looks for workflow files in the current project again,
-// keeping the configured settings; an explicit workflow selection stays
-// selectable just like in setDir.
-func (a *App) rescanWorkflows() {
-	a.workflows = settings.ScanWorkflows(a.settings.Dir)
-	if a.settings.Workflow != "" && !contains(a.workflows, a.settings.Workflow) {
-		a.workflows = append(a.workflows, a.settings.Workflow)
-	}
-	a.loadWorkflow()
-}
-
-// pickConfigFile binds the chosen path to act's existing file flags.
-func (a *App) pickConfigFile(kind string) {
-	if a.win == nil {
-		return
-	}
-	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.win, Title: "Choose " + kind + " file"})
-		a.win.Update(func() {
-			if err != nil {
-				a.fileErr = "Cannot choose file: " + err.Error()
-				return
-			}
-			if len(paths) == 0 {
-				return
-			}
-			a.fileErr = ""
-			switch kind {
-			case "Secrets":
-				a.settings.SecretFile = paths[0]
-			case "Env":
-				a.settings.EnvFile = paths[0]
-			case "Vars":
-				a.settings.VarFile = paths[0]
-			case "Event payload":
-				a.settings.EventPayload = paths[0]
-			}
-		})
-	}()
-}
-
-// clearRun drops run state for a fresh directory or a manual clear.
-func (a *App) clearRun() {
-	if a.runID != 0 {
-		a.history = append(a.history, a.snapshot())
-		a.runID = 0
-	}
-	a.run.Reset()
-	a.runErr = ""
-	a.selJob = ""
-	a.logMode = 0
-	a.elapsed = 0
-	a.rawLogs = nil
-	a.logUI.filter = filterAll
-	a.logUI.output = nil
-	a.logUI.tabs = nil
-}
-
-// startRun launches act with the current settings.
-func (a *App) startRun() {
-	if a.running || a.settings.Dir == "" || len(a.workflows) == 0 {
-		return
-	}
-	a.clearRun()
-	a.started = time.Now()
-	var err error
-	if a.preferences.SaveRuns {
-		a.runFiles, err = newRunFiles(a.settings.Dir, a.started)
-		if err != nil {
-			a.preferenceErr = "Cannot save run output: " + err.Error()
-		}
-	}
-	args, err := a.settings.Args()
-	if err != nil {
-		a.runErr = err.Error()
-		a.writeRunFile(`{"msg":"act failed to start"}`)
-		a.closeRunFiles()
-		a.notifyRun(act.StatusFailure)
-		return
-	}
-	r := &act.Runner{}
-	err = r.Start(a.settings.Dir, args, a.scheduleFlush, a.scheduleFlush)
-	if err != nil {
-		a.runErr = fmt.Sprintf("failed to start act: %v", err)
-		a.writeRunFile(`{"msg":"act failed to start"}`)
-		a.closeRunFiles()
-		a.notifyRun(act.StatusFailure)
-		return
-	}
-	a.runner = r
-	a.running = true
-	a.nextRunID++
-	a.runID, a.runDir = a.nextRunID, a.settings.Dir
-}
-
-func (a *App) stopRun() {
-	if a.running && a.runner != nil {
-		a.runner.Stop()
-	}
-}
-
-// shutdown waits for act's post steps and resource cleanup before returning to main.
+// shutdown waits for every run's post steps and resource cleanup before returning to main.
 func (a *App) shutdown() {
 	a.shuttingDown = true
 	close(a.done)
 	if a.mcpServer != nil {
 		_ = a.mcpServer.Close()
 	}
-	if a.runner != nil {
-		a.runner.Stop()
-		a.runner.Wait()
-		a.pump()
-	}
-	a.closeRunFiles()
-}
-
-// scheduleFlush asks the UI thread to drain runner output; coalesced so
-// floods of lines don't flood the main queue. Called from worker goroutines.
-func (a *App) scheduleFlush() {
-	if a.win == nil {
-		return
-	}
-	if a.flushScheduled.CompareAndSwap(false, true) {
-		a.win.Update(func() {
-			a.flushScheduled.Store(false)
-			a.pump()
-		})
-	}
-}
-
-// pump drains buffered act output into the run model, on the main thread.
-func (a *App) pump() {
-	if a.runner == nil || !a.running {
-		return
-	}
-	lines, done, err := a.runner.Drain()
-	for _, l := range lines {
-		a.feedRun(l)
-	}
-	if done {
-		// Any lines the scanner delivered after the last drain.
-		lines, _, _ = a.runner.Drain()
-		for _, l := range lines {
-			a.feedRun(l)
-		}
-		a.running = false
-		a.elapsed = time.Since(a.started)
-		st := act.StatusFailure
-		switch {
-		case err == nil:
-			st = act.StatusSuccess
-		case friendlyExit(err) == "stopped":
-			st = act.StatusCancelled
-		default:
-			// An exit error with a failed job already explains itself in the
-			// job list; only surface it when nothing else does.
-			failed := false
-			for _, j := range a.run.Jobs {
-				failed = failed || j.Status == act.StatusFailure
-			}
-			if !failed {
-				a.runErr = friendlyExit(err)
-			}
-		}
-		a.run.Finish(st)
-		for _, job := range a.run.Jobs {
-			if job.Status == act.StatusFailure {
-				st = act.StatusFailure
-				break
-			}
-		}
-		if err != nil {
-			a.writeRunFile(fmt.Sprintf(`{"msg":"act %s"}`, st.String()))
-		}
-		a.closeRunFiles()
-		a.notifyRun(st)
-	}
-}
-
-// selectedJob resolves the job the log pane shows: the user's choice, or the
-// newest job once output arrives.
-func (a *App) selectedJob() *act.Job {
-	if a.selJob != "" && a.selJob != act.RunnerJobKey {
-		for _, j := range a.run.Jobs {
-			if j.Key == a.selJob {
-				return j
-			}
+	for _, s := range a.sessions {
+		if s.runner != nil {
+			s.runner.Stop()
 		}
 	}
-	if len(a.run.Jobs) > 0 {
-		return a.run.Jobs[0]
-	}
-	return nil
-}
-
-// overallStatus summarizes the run for the header.
-func (a *App) overallStatus() act.Status {
-	if a.running {
-		return act.StatusRunning
-	}
-	if len(a.run.Jobs) == 0 && len(a.run.Runner) == 0 {
-		return act.StatusPending
-	}
-	st := act.StatusSuccess
-	for _, j := range a.run.Jobs {
-		switch j.Status {
-		case act.StatusFailure:
-			return act.StatusFailure
-		case act.StatusRunning, act.StatusPending:
-			st = act.StatusRunning
-		case act.StatusCancelled:
-			st = act.StatusCancelled
-		case act.StatusSuccess, act.StatusSkipped:
+	for _, s := range a.sessions {
+		if s.runner != nil {
+			s.runner.Wait()
+			s.pump()
 		}
+		s.closeRunFiles()
 	}
-	if a.runErr != "" {
-		return act.StatusFailure
-	}
-	return st
-}
-
-func friendlyExit(err error) string {
-	if errors.Is(err, context.Canceled) {
-		return "stopped"
-	}
-	return "act failed: " + err.Error()
-}
-
-// cmdline renders a shell-quoted command with secret values redacted.
-func (a *App) cmdline() string {
-	args, err := a.settings.Args()
-	if err != nil {
-		return "act"
-	}
-	redactArgs(args)
-	return "act " + shellquote.Join(args...)
-}
-
-func redactArgs(args []string) {
-	for i, w := range args {
-		// Keep secret values out of both command previews and clipboard copies.
-		switch {
-		case i > 0 && (args[i-1] == "-s" || args[i-1] == "--secret"):
-			name, _, _ := strings.Cut(w, "=")
-			args[i] = name + "=••••••••"
-		case strings.HasPrefix(w, "--secret="):
-			name, _, _ := strings.Cut(strings.TrimPrefix(w, "--secret="), "=")
-			args[i] = "--secret=" + name + "=••••••••"
-		case strings.HasPrefix(w, "-s") && w != "-s":
-			name, _, _ := strings.Cut(w[2:], "=")
-			args[i] = "-s" + name + "=••••••••"
-		}
-	}
-}
-
-func contains(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

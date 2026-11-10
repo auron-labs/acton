@@ -41,19 +41,19 @@ func (a *App) enableNotifications() {
 	}()
 }
 
-func (a *App) notifyRun(st act.Status) {
+func (a *App) notifyRun(s *Session, st act.Status) {
 	if a.shuttingDown {
 		return
 	}
 	if a.notifyTest != nil {
-		a.notifyTest(st)
+		a.notifyTest(s, st)
 		return
 	}
 	if !a.preferences.Notifications || a.win == nil {
 		return
 	}
 	go func() {
-		err := nativeNotification("Acton run "+st.String(), "Workflow run "+st.String()+".")
+		err := nativeNotification("Acton run "+st.String(), s.name()+": workflow run "+st.String()+".")
 		if err != nil {
 			a.win.Update(func() { a.preferenceErr = "Cannot deliver notification: " + err.Error() })
 		}

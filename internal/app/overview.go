@@ -12,7 +12,7 @@ import (
 
 const overviewJobKey = "\x00overview"
 
-func (a *App) overviewRow(c *ui.Context, selected bool) {
+func (s *Session) overviewRow(c *ui.Context, selected bool) {
 	t := c.Theme()
 	row := ui.Row(c.Key("overview")).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
 	if selected {
@@ -20,20 +20,20 @@ func (a *App) overviewRow(c *ui.Context, selected bool) {
 	} else if row.Hovered() {
 		row.Background(t.Text.Alpha(.04))
 	}
-	row.Label("Overview").Cursor(ui.CursorPointer).OnClick(func() { a.selJob = overviewJobKey })
+	row.Label("Overview").Cursor(ui.CursorPointer).OnClick(func() { s.selJob = overviewJobKey })
 	row.Children(func() {
 		components.Icon(c, lucide.List()).Size(t.Space(4.5), t.Space(4.5)).TextColor(t.TextMuted)
 		components.Text(c, "Overview").Grow(1).SingleLine()
 	})
 }
 
-func (a *App) overviewPane(c *ui.Context) {
+func (s *Session) overviewPane(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Children(func() {
 		components.Text(c, "Overview").Bold().Padding(t.Space(3))
 		ui.Divider(c)
 		count := 0
-		for _, j := range a.run.Jobs {
+		for _, j := range s.run.Jobs {
 			count += len(j.Annotations)
 		}
 		if count == 0 {
@@ -45,7 +45,7 @@ func (a *App) overviewPane(c *ui.Context) {
 		}
 		components.ScrollView(c, components.ScrollViewOptions{}).Fill().Children(func() {
 			ui.Column(c).FillWidth().Padding(16).Gap(12).Children(func() {
-				for _, j := range a.run.Jobs {
+				for _, j := range s.run.Jobs {
 					if len(j.Annotations) == 0 {
 						continue
 					}

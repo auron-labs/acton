@@ -22,12 +22,12 @@ func feed(r *act.Run, lines ...string) {
 
 // TestViewSmoke builds the app view headlessly and exercises the jobs pane.
 func TestViewSmoke(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = "/tmp/proj"
 	a.workflows = []string{".github/workflows/ci.yml"}
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
-		a.view(c)
+		a.app.view(c)
 	}, 1120, 720)
 
 	if !tt.HasText("Nothing has run yet") {
@@ -91,17 +91,17 @@ func TestProjectSelectionAndConfiguration(t *testing.T) {
 	if err := registerFonts(); err != nil {
 		t.Fatal(err)
 	}
-	a := newApp()
+	app := newApp()
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
-		a.view(c)
+		app.view(c)
 	}, 1120, 720)
 	if !tt.HasText("Select a project") || !tt.HasText("Choose project…") || tt.HasText("Workflow") {
 		t.Fatalf("expected project picker without settings: %q", tt.Texts())
 	}
 	dir := t.TempDir()
 	writeWorkflow(t, dir)
-	a.setDir(dir)
+	a := app.openProject(dir)
 	tt.Frame()
 	if tt.HasText("Select a project") || !tt.HasText("Workflow") || !tt.HasText("Nothing has run yet") {
 		t.Fatalf("expected configured project: %q", tt.Texts())
@@ -165,12 +165,12 @@ func writeWorkflow(t *testing.T, dir string) {
 // panes, blocks runs, and its Check again rescan reaches the configured
 // state without resetting settings.
 func TestNoWorkflowsState(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.setDir(t.TempDir())
 	a.settings.Job = "build"
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
-		a.view(c)
+		a.app.view(c)
 	}, 1120, 720)
 	for _, want := range []string{"No GitHub Actions found", ".github/workflows", "Check again", "Choose another project…"} {
 		if !tt.HasText(want) {
@@ -183,7 +183,7 @@ func TestNoWorkflowsState(t *testing.T) {
 	// Run is unavailable without workflow files, however it is invoked.
 	ht := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
-		a.headerActions(c)
+		a.app.headerActions(c)
 	}, 400, 64)
 	ht.Frame()
 	if ht.HasText("Run") {
@@ -220,12 +220,12 @@ func TestRescanPreservesExplicitWorkflow(t *testing.T) {
 	if err := os.Rename(filepath.Join(dir, ".github", "workflows", "ci.yml"), filepath.Join(dir, "custom.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	a := newApp()
+	a := newTestSession()
 	a.setDir(dir)
-	a.settings.Workflow = "custom.yaml"
+	a.settings.Workflows = []string{"custom.yaml"}
 	a.rescanWorkflows()
-	if len(a.workflows) != 1 || a.workflows[0] != "custom.yaml" || a.settings.Workflow != "custom.yaml" || a.workflowErr != "" || !contains(a.workflowJobs, "build") {
-		t.Fatalf("explicit workflow lost on rescan: workflows=%q selection=%q jobs=%q error=%q", a.workflows, a.settings.Workflow, a.workflowJobs, a.workflowErr)
+	if len(a.workflows) != 1 || a.workflows[0] != "custom.yaml" || len(a.settings.Workflows) != 1 || a.settings.Workflows[0] != "custom.yaml" || a.workflowErr != "" || !contains(a.workflowJobs, "build") {
+		t.Fatalf("explicit workflow lost on rescan: workflows=%q selection=%q jobs=%q error=%q", a.workflows, a.settings.Workflows, a.workflowJobs, a.workflowErr)
 	}
 }
 
@@ -236,13 +236,13 @@ func TestFriendlyExitCancellation(t *testing.T) {
 }
 
 func TestMinimumWindowPreservesLogSpace(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = "/tmp/proj"
 	a.workflows = []string{".github/workflows/ci.yml"}
 	feed(&a.run, `{"job":"CI/build","step":"go test","stepID":["test"],"stage":"Main","msg":"⭐ Run Main go test"}`)
 	tt := ui.NewTester(func(c *ui.Context) {
 		c.SetTheme(designTheme(c))
-		a.view(c)
+		a.app.view(c)
 	}, 720, 480)
 	log, ok := tt.Find("Step go test")
 	if !ok || log.W < 260 {
@@ -266,7 +266,7 @@ jobs:
 	if err := os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), []byte(workflow), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a := newApp()
+	a := newTestSession()
 	a.runner = &act.Runner{}
 	logged := make(chan struct{}, 1)
 	if err := a.runner.Start(dir, []string{"push", "-P", "ubuntu-latest=-self-hosted", "--no-cache-server", "--action-cache-path", t.TempDir()}, func() {
@@ -290,14 +290,23 @@ jobs:
 	}
 	// Shutdown owns the runner lifecycle even when the view's flag is stale.
 	a.running = false
-	a.shutdown()
+	a.app.shutdown()
 	_, done, err := a.runner.Drain()
 	if !done || !errors.Is(err, context.Canceled) {
 		t.Fatalf("shutdown returned before cancellation and cleanup: done=%v, err=%v", done, err)
 	}
 	select {
-	case <-a.done:
+	case <-a.app.done:
 	default:
 		t.Fatal("shutdown did not close the application lifetime")
 	}
+}
+
+// newTestSession returns an app holding one selected, empty project tab.
+func newTestSession() *Session {
+	app := newApp()
+	s := newSession(app)
+	app.sessions = []*Session{s}
+	app.current = s
+	return s
 }

@@ -11,192 +11,70 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/oneo-me/onevra/source/components"
 	"github.com/oneo-me/onevra/source/icons/lucide"
-	"github.com/oneo-me/onevra/source/shells/plain"
 )
 
-// view builds the window content: the resizable configuration | run split.
-// The shell header carries the project picker and run controls.
-func (a *App) view(c *ui.Context) {
-	if a.running {
-		// Tick elapsed/duration labels while a run is live.
-		c.After(time.Second)
+// view is the project tab's content: the resizable configuration | run split.
+func (s *Session) view(c *ui.Context) {
+	if len(s.workflows) == 0 {
+		s.noWorkflowsView(c)
+		return
 	}
-	ui.Column(c).Fill().Background(panelBackground(c)).Padding(plain.HeaderHeight(c), 0, 0, 0).Children(func() {
-		ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
-			ui.Divider(c)
-			if a.settings.Dir == "" {
-				a.emptyRunView(c)
-				return
-			}
-			if len(a.workflows) == 0 {
-				a.noWorkflowsView(c)
-				return
-			}
-			components.Split(c, &a.cfgW, func() { a.configView(c) }, func() { a.runView(c) },
-				components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 320}).Fill()
-		})
-	})
-}
-
-// headerLeading is the shell header's left slot: the project picker and the
-// .actrc badge.
-func (a *App) headerLeading(c *ui.Context) {
-	t := c.Theme()
-	ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).MinWidth(0).Children(func() {
-		folder := components.Button(c, "", components.ButtonSecondary).Label("Choose project folder").Disabled(a.running)
-		folder.Children(func() {
-			ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).MinWidth(0).Children(func() {
-				components.Icon(c, lucide.FolderOpen()).Size(t.Space(4), t.Space(4)).Shrink(0)
-				label := "Choose project…"
-				if a.settings.Dir != "" {
-					label = abbrevHome(a.settings.Dir)
-				}
-				components.Text(c, label).SingleLine().MaxWidth(400).Ellipsis("…")
-			})
-		})
-		if folder.Clicked() {
-			a.pickFolder()
-		}
-		if n := len(a.settings.ActrcFiles); n > 0 {
-			badge := components.Badge(c, fmt.Sprintf(".actrc ×%d", n), components.BadgeOptions{Tone: components.BadgeNeutral, Icon: lucide.FileText()})
-			components.Tooltip(c, badge, "Defaults loaded from:\n"+strings.Join(a.settings.ActrcFiles, "\n"))
-		}
-	})
-}
-
-// headerActions is the shell header's right slot: run status and the
-// Run/Stop button.
-func (a *App) headerActions(c *ui.Context) {
-	t := c.Theme()
-	ui.Row(c).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
-		switch st := a.overallStatus(); {
-		case a.running:
-			components.Text(c, act.FormatDuration(time.Since(a.started))).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
-			stop := components.Button(c, "", components.ButtonSecondary).Label("Stop run")
-			stop.Children(func() {
-				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
-					components.Icon(c, lucide.Square()).Size(t.Space(3.5), t.Space(3.5)).TextColor(t.Danger)
-					components.Text(c, "Stop").SingleLine()
-				})
-			})
-			if stop.Clicked() {
-				a.stopRun()
-			}
-		default:
-			if st.Done() && len(a.run.Jobs)+len(a.run.Runner) > 0 {
-				statusIcon(c, st, 4.5)
-				components.Text(c, act.FormatDuration(a.elapsed)).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine()
-			}
-			if a.settings.Dir == "" || len(a.workflows) == 0 {
-				return
-			}
-			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow")
-			run.Children(func() {
-				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
-					components.Icon(c, lucide.Play()).Size(t.Space(3.5), t.Space(3.5))
-					components.Text(c, "Run").SingleLine()
-				})
-			})
-			if run.Clicked() {
-				a.startRun()
-			}
-		}
-	})
+	components.Split(c, &s.cfgW, func() { s.configView(c) }, func() { s.runView(c) },
+		components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 320}).Fill()
 }
 
 // runView is the right pane: jobs list beside the selected job's log, or a
 // placeholder before the first run.
-func (a *App) runView(c *ui.Context) {
+func (s *Session) runView(c *ui.Context) {
 	t := c.Theme()
-	if a.runErr != "" {
+	if s.runErr != "" {
 		ui.Row(c).FillWidth().Shrink(0).Padding(t.Space(1.5), t.Space(3)).Gap(t.Space(2)).AlignItems(ui.Center).
 			Background(t.Danger.Alpha(.1)).Children(func() {
 			components.Icon(c, lucide.CircleAlert()).Size(t.Space(4), t.Space(4)).TextColor(t.Danger).Shrink(0)
-			components.Text(c, a.runErr).TextColor(t.Danger).FontSize(12)
+			components.Text(c, s.runErr).TextColor(t.Danger).FontSize(12)
 		})
 	}
-	if len(a.run.Jobs) == 0 && len(a.run.Runner) == 0 {
-		a.emptyRunView(c)
+	if len(s.run.Jobs) == 0 && len(s.run.Runner) == 0 {
+		s.emptyRunView(c)
 		return
 	}
-	components.Split(c, &a.jobW, func() { a.jobsPane(c) }, func() {
-		if a.selJob == overviewJobKey {
-			a.overviewPane(c)
-		} else if a.selJob == act.RunnerJobKey || (a.selJob == "" && a.selectedJob() == nil && len(a.run.Runner) > 0) {
-			a.runnerPane(c)
-		} else if j := a.selectedJob(); j != nil {
-			a.logPane(c, j)
+	components.Split(c, &s.jobW, func() { s.jobsPane(c) }, func() {
+		if s.selJob == overviewJobKey {
+			s.overviewPane(c)
+		} else if s.selJob == workflowJobKey {
+			s.workflowPane(c)
+		} else if s.selJob == act.RunnerJobKey || (s.selJob == "" && s.selectedJob() == nil && len(s.run.Runner) > 0) {
+			s.runnerPane(c)
+		} else if j := s.selectedJob(); j != nil {
+			s.logPane(c, j)
 		}
 	}, components.SplitOptions{FirstMin: 160, SecondMin: 260, Default: 220}).Fill()
 }
 
 // emptyRunView is the centered placeholder shown before any output exists.
-func (a *App) emptyRunView(c *ui.Context) {
+func (s *Session) emptyRunView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(t.Space(3)).Padding(t.Space(6)).Children(func() {
-		if a.settings.Dir == "" {
-			components.Icon(c, lucide.FolderOpen()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
-			components.Text(c, "Select a project").FontSize(t.Rem(22.0 / 13)).Bold()
-			components.Text(c, "Pick a project folder to run its workflows with act").TextColor(t.TextMuted)
-			choose := components.Button(c, "", components.ButtonSecondary).Label("Choose project folder")
-			choose.Children(func() {
-				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
-					components.Icon(c, lucide.FolderOpen()).Size(t.Space(3.5), t.Space(3.5))
-					components.Text(c, "Choose project…").SingleLine()
-				})
-			})
-			if choose.Clicked() {
-				a.pickFolder()
-			}
-			a.recentList(c)
-			return
-		}
 		components.Icon(c, lucide.SquareTerminal()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
-		if a.running {
+		if s.running {
 			components.Spinner(c, components.SpinnerSpokes)
 			components.Text(c, "Starting act…").TextColor(t.TextMuted)
-		} else {
-			components.Text(c, "Nothing has run yet").TextColor(t.TextMuted)
-			ui.Themed(c, logTheme(c)).FillWidth().MaxWidth(560).Padding(t.Space(3), t.Space(3.5)).Radius(t.Radius).
-				Border(1, t.Border).Children(func() {
-				components.Text(c, a.cmdline()).FillWidth().Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13)).Selectable()
-			})
-			run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow")
-			run.Children(func() {
-				ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
-					components.Icon(c, lucide.Play()).Size(t.Space(3.5), t.Space(3.5))
-					components.Text(c, "Run").SingleLine()
-				})
-			})
-			if run.Clicked() {
-				a.startRun()
-			}
+			return
 		}
-	})
-}
-
-// recentList shows the recently opened projects under the picker button;
-// clicking one reopens it. It renders nothing when there is no history.
-func (a *App) recentList(c *ui.Context) {
-	dirs := a.recentProjects()
-	if len(dirs) == 0 {
-		return
-	}
-	t := c.Theme()
-	ui.Column(c).FillWidth().MaxWidth(420).Gap(t.Space(0.5)).Margin(t.Space(3), 0, 0, 0).Children(func() {
-		components.Text(c, "Recent projects").FontSize(t.Rem(12.0/13)).TextColor(t.TextMuted).SingleLine().Padding(0, t.Space(2), t.Space(1), t.Space(2))
-		for _, dir := range dirs {
-			row := ui.Row(c.Key("recent:"+dir)).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
-			if row.Hovered() {
-				row.Background(t.Text.Alpha(.04))
-			}
-			row.Label("Open " + dir).Cursor(ui.CursorPointer).OnClick(func() { a.setDir(dir) })
-			row.Children(func() {
-				components.Icon(c, lucide.Folder()).Size(t.Space(4), t.Space(4)).TextColor(t.TextMuted).Shrink(0)
-				ui.Row(c).Grow(1).MinWidth(0).Clip().Children(func() {
-					components.Text(c, abbrevHome(dir)).SingleLine()
-				})
+		components.Text(c, "Nothing has run yet").TextColor(t.TextMuted)
+		ui.Themed(c, logTheme(c)).FillWidth().MaxWidth(560).Padding(t.Space(3), t.Space(3.5)).Radius(t.Radius).
+			Border(1, t.Border).Children(func() {
+			components.Text(c, s.cmdline()).FillWidth().Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13)).Selectable()
+		})
+		run := components.Button(c, "", components.ButtonPrimary).Label("Run workflow")
+		run.Children(func() {
+			ui.Row(c).Gap(t.Space(1.5)).AlignItems(ui.Center).Children(func() {
+				components.Icon(c, lucide.Play()).Size(t.Space(3.5), t.Space(3.5))
+				components.Text(c, "Run").SingleLine()
 			})
+		})
+		if run.Clicked() {
+			s.startRun()
 		}
 	})
 }
@@ -204,7 +82,7 @@ func (a *App) recentList(c *ui.Context) {
 // noWorkflowsView is the dedicated full-content state for a project without
 // GitHub Actions: the project picker stays in the header while the content
 // explains the gap and offers a rescan or a different folder.
-func (a *App) noWorkflowsView(c *ui.Context) {
+func (s *Session) noWorkflowsView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(t.Space(4)).Padding(t.Space(6)).Children(func() {
 		components.Icon(c, lucide.Workflow()).Size(t.Space(11), t.Space(11)).TextColor(t.TextMuted)
@@ -220,7 +98,7 @@ func (a *App) noWorkflowsView(c *ui.Context) {
 				})
 			})
 			if check.Clicked() {
-				a.rescanWorkflows()
+				s.rescanWorkflows()
 			}
 			choose := components.Button(c, "", components.ButtonSecondary).Label("Choose another project")
 			choose.Children(func() {
@@ -230,27 +108,27 @@ func (a *App) noWorkflowsView(c *ui.Context) {
 				})
 			})
 			if choose.Clicked() {
-				a.pickFolder()
+				s.app.pickFolder()
 			}
 		})
 	})
 }
 
 // jobsPane lists jobs like GitHub's run sidebar: status icon, name, duration.
-func (a *App) jobsPane(c *ui.Context) {
+func (s *Session) jobsPane(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(t.Space(2), t.Space(3)).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 			components.Text(c, "Jobs").Bold().SingleLine()
 			ui.Spacer(c)
-			if !a.running && (len(a.run.Jobs)+len(a.run.Runner) > 0) {
+			if !s.running && (len(s.run.Jobs)+len(s.run.Runner) > 0) {
 				clearBtn := components.Button(c, "", components.ButtonGhost).Label("Clear run output")
 				clearBtn.Size(t.Space(7), t.Space(7)).Padding(0).Children(func() {
 					components.Icon(c, lucide.RotateCcw()).Size(t.Space(3.5), t.Space(3.5)).TextColor(t.TextMuted)
 				})
 				components.Tooltip(c, clearBtn, "Clear run output")
 				if clearBtn.Clicked() {
-					a.clearRun()
+					s.clearRun()
 				}
 			}
 		})
@@ -258,25 +136,28 @@ func (a *App) jobsPane(c *ui.Context) {
 		components.ScrollView(c, components.ScrollViewOptions{}).Fill().Padding(t.Space(1.5)).Children(func() {
 			ui.Column(c).FillWidth().Gap(t.Space(0.5)).Children(func() {
 				selected := ""
-				if j := a.selectedJob(); j != nil {
+				if j := s.selectedJob(); j != nil {
 					selected = j.Key
 				}
-				if a.selJob == act.RunnerJobKey || a.selJob == overviewJobKey {
-					selected = a.selJob
+				if s.selJob == act.RunnerJobKey || s.selJob == overviewJobKey || s.selJob == workflowJobKey {
+					selected = s.selJob
 				}
-				a.overviewRow(c, selected == overviewJobKey)
-				for _, j := range a.run.Jobs {
-					a.jobRow(c, j, j.Key == selected)
+				s.overviewRow(c, selected == overviewJobKey)
+				if len(s.runWorkflows) > 0 {
+					s.workflowRow(c, selected == workflowJobKey)
 				}
-				if len(a.run.Runner) > 0 {
-					a.runnerRow(c, selected == act.RunnerJobKey)
+				for _, j := range s.run.Jobs {
+					s.jobRow(c, j, j.Key == selected)
+				}
+				if len(s.run.Runner) > 0 {
+					s.runnerRow(c, selected == act.RunnerJobKey)
 				}
 			})
 		})
 	})
 }
 
-func (a *App) jobRow(c *ui.Context, j *act.Job, selected bool) {
+func (s *Session) jobRow(c *ui.Context, j *act.Job, selected bool) {
 	t := c.Theme()
 	row := ui.Row(c.Key(j.Key)).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
 	switch {
@@ -285,7 +166,7 @@ func (a *App) jobRow(c *ui.Context, j *act.Job, selected bool) {
 	case row.Hovered():
 		row.Background(t.Text.Alpha(.04))
 	}
-	row.Label("Job " + j.Name).Cursor(ui.CursorPointer).OnClick(func() { a.selJob = j.Key })
+	row.Label("Job " + j.Name).Cursor(ui.CursorPointer).OnClick(func() { s.selJob = j.Key })
 	row.Children(func() {
 		statusIcon(c, j.Status, 4.5)
 		ui.Row(c).Grow(1).MinWidth(0).Clip().Children(func() {
@@ -297,7 +178,7 @@ func (a *App) jobRow(c *ui.Context, j *act.Job, selected bool) {
 	})
 }
 
-func (a *App) runnerRow(c *ui.Context, selected bool) {
+func (s *Session) runnerRow(c *ui.Context, selected bool) {
 	t := c.Theme()
 	row := ui.Row(c.Key("runner")).FillWidth().Padding(t.Space(1.5), t.Space(2)).Gap(t.Space(2)).AlignItems(ui.Center).Radius(t.Radius)
 	switch {
@@ -306,17 +187,17 @@ func (a *App) runnerRow(c *ui.Context, selected bool) {
 	case row.Hovered():
 		row.Background(t.Text.Alpha(.04))
 	}
-	row.Label("Runner output").Cursor(ui.CursorPointer).OnClick(func() { a.selJob = act.RunnerJobKey })
+	row.Label("Runner output").Cursor(ui.CursorPointer).OnClick(func() { s.selJob = act.RunnerJobKey })
 	row.Children(func() {
 		components.Icon(c, lucide.Terminal()).Size(t.Space(4.5), t.Space(4.5)).TextColor(t.TextMuted)
 		components.Text(c, "Runner output").SingleLine().Grow(1)
-		components.Badge(c, strconv.Itoa(len(a.run.Runner)), components.BadgeOptions{Tone: components.BadgeNeutral})
+		components.Badge(c, strconv.Itoa(len(s.run.Runner)), components.BadgeOptions{Tone: components.BadgeNeutral})
 	})
 }
 
 // logPane shows the selected job: header with name/status, then the
 // GitHub-style step tree or the raw log.
-func (a *App) logPane(c *ui.Context, j *act.Job) {
+func (s *Session) logPane(c *ui.Context, j *act.Job) {
 	t := c.Theme()
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(t.Space(2), t.Space(3)).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -327,23 +208,23 @@ func (a *App) logPane(c *ui.Context, j *act.Job) {
 					components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine().Shrink(0)
 				}
 			})
-			ui.Segmented(c, &a.logMode, "Steps", "Raw log").Shrink(0).Label("Log view mode")
+			ui.Segmented(c, &s.logMode, "Steps", "Raw log").Shrink(0).Label("Log view mode")
 		})
 		ui.Divider(c)
-		if a.logMode == 1 {
-			a.rawLogView(c, j)
+		if s.logMode == 1 {
+			s.rawLogView(c, j)
 		} else {
-			a.stepSummary(c, j)
+			s.stepSummary(c, j)
 			axis := jobTimeAxis(j, time.Now())
 			durationSummary(c, j, axis)
 			timelineColumns(c)
-			a.stepsView(c, j, axis)
+			s.stepsView(c, j, axis)
 		}
 	})
 }
 
 // runnerPane shows untagged act output (startup, errors, docker host info).
-func (a *App) runnerPane(c *ui.Context) {
+func (s *Session) runnerPane(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(t.Space(2), t.Space(3)).Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -351,39 +232,39 @@ func (a *App) runnerPane(c *ui.Context) {
 			components.Text(c, "Runner output").Bold().SingleLine()
 		})
 		ui.Divider(c)
-		a.linesView(c, a.run.Runner)
+		s.linesView(c, s.run.Runner)
 	})
 }
 
 // stepsView keeps each bounded output panel as one virtual row.
-func (a *App) stepsView(c *ui.Context, j *act.Job, axis timeAxis) {
-	rows := flatRows(j, a.logUI.filter)
-	a.logUI.list.Key = func(i int) any { return rows[i].key }
-	components.List(c, &a.logUI.list, len(rows), func(i int) {
+func (s *Session) stepsView(c *ui.Context, j *act.Job, axis timeAxis) {
+	rows := flatRows(j, s.logUI.filter)
+	s.logUI.list.Key = func(i int) any { return rows[i].key }
+	components.List(c, &s.logUI.list, len(rows), func(i int) {
 		r := rows[i]
 		switch {
 		case r.output:
-			a.stepOutput(c, r)
+			s.stepOutput(c, r)
 		case r.step != nil:
-			a.stepHeaderRow(c, r, axis)
+			stepHeaderRow(c, r, axis)
 		default:
-			a.logLineRow(c, r)
+			s.logLineRow(c, r)
 		}
 	}).Fill()
 }
 
 // rawLogView uses the original records directly and retains its scroll state.
-func (a *App) rawLogView(c *ui.Context, j *act.Job) {
-	rl := a.rawLogFor(j)
+func (s *Session) rawLogView(c *ui.Context, j *act.Job) {
+	rl := s.rawLogFor(j)
 	rl.list.FollowEnd = true
-	components.List(c, &rl.list, len(j.Raw), func(i int) { a.logLineRow(c, rowRef{line: j.Raw[i]}) }).Fill().Label("Raw act output")
+	components.List(c, &rl.list, len(j.Raw), func(i int) { s.logLineRow(c, rowRef{line: j.Raw[i]}) }).Fill().Label("Raw act output")
 }
 
 // linesView renders a plain list of lines (runner output).
-func (a *App) linesView(c *ui.Context, lines []string) {
+func (s *Session) linesView(c *ui.Context, lines []string) {
 	t := c.Theme()
-	a.logUI.runner.FollowEnd = true
-	components.List(c, &a.logUI.runner, len(lines), func(i int) {
+	s.logUI.runner.FollowEnd = true
+	components.List(c, &s.logUI.runner, len(lines), func(i int) {
 		ui.Row(c).FillWidth().Padding(0, t.Space(3), 0, 0).Children(func() {
 			ui.Text(c, lines[i]).Font("JetBrains Mono").FontSize(12).Selectable()
 		})
@@ -391,7 +272,7 @@ func (a *App) linesView(c *ui.Context, lines []string) {
 }
 
 // logLineRow is one output line beneath a step header (or job level).
-func (a *App) logLineRow(c *ui.Context, r rowRef) {
+func (s *Session) logLineRow(c *ui.Context, r rowRef) {
 	t := c.Theme()
 	indent := float32(12)
 	if r.step == nil {

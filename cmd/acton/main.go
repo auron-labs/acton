@@ -2,9 +2,13 @@
 // on the left, GitHub-Actions-style job output on the right.
 //
 // Usage: acton [--run] [--mcp[=127.0.0.1:7337]] [project-dir]
+//
+// Each run executes in a worker process: the same executable started with
+// act.WorkerArg.
 package main
 
 import (
+	"acton/internal/act"
 	"acton/internal/app"
 	"log"
 	"os"
@@ -13,6 +17,7 @@ import (
 )
 
 func main() {
+	act.MaybeRunWorker()
 	dir, runNow := "", false
 	mcpAddr := ""
 	for _, arg := range os.Args[1:] {

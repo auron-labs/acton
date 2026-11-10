@@ -13,7 +13,7 @@ import (
 
 func TestHistoryMaskingMarker(t *testing.T) {
 	for _, insecure := range []bool{false, true} {
-		r := &Runner{onFlush: func() {}, level: logrus.InfoLevel, insecureSecrets: insecure}
+		r := &engine{onFlush: func() {}, level: logrus.InfoLevel, insecureSecrets: insecure}
 		ctx := actrunner.WithJobLoggerFactory(context.Background(), r)
 		masks := []string{"dynamic-secret"}
 		//nolint:gosec // G101: these are synthetic secret values used to test masking.

@@ -19,8 +19,8 @@ type Settings struct {
 	// Dir is the project directory act runs in (its -C workdir equivalent).
 	Dir string
 
-	// Workflow is the -W workflow path relative to Dir; "" runs all.
-	Workflow string
+	// Workflows are the -W workflow paths relative to Dir; empty runs all.
+	Workflows []string
 	// Event is the act positional argument, e.g. "push".
 	Event string
 	// Job is -j; "" runs all jobs.
@@ -123,7 +123,7 @@ func (s *Settings) applyActrcWord(name, value string, hasValue bool) (ok bool) {
 	case "-j", "--job":
 		s.Job = value
 	case "-W", "--workflows":
-		s.Workflow = value
+		s.Workflows = appendUnique(s.Workflows, value)
 	case "-n", "--dryrun":
 		s.DryRun = boolFlag(value, hasValue)
 	case "-v", "--verbose":
@@ -378,8 +378,8 @@ func (s *Settings) Args() ([]string, error) {
 		event = "push"
 	}
 	args = append(args, event)
-	if s.Workflow != "" {
-		args = append(args, "-W", s.Workflow)
+	for _, w := range s.Workflows {
+		args = append(args, "-W", w)
 	}
 	if j := strings.TrimSpace(s.Job); j != "" {
 		args = append(args, "-j", j)

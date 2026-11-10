@@ -59,7 +59,7 @@ func TestActrcParsing(t *testing.T) {
 
 func TestArgs(t *testing.T) {
 	s := Default("/proj")
-	s.Workflow = ".github/workflows/ci.yml"
+	s.Workflows = []string{".github/workflows/ci.yml", ".github/workflows/lint.yml"}
 	s.Job = "test"
 	s.Secrets = []string{"A=1"}
 	s.Env = []string{"B=2"}
@@ -71,7 +71,7 @@ func TestArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(args, " ")
-	want := `push -W .github/workflows/ci.yml -j test -P ubuntu-latest=catthehacker/ubuntu:act-latest -s A=1 --env B=2 --input name=x -n -v -p --json=true`
+	want := `push -W .github/workflows/ci.yml -W .github/workflows/lint.yml -j test -P ubuntu-latest=catthehacker/ubuntu:act-latest -s A=1 --env B=2 --input name=x -n -v -p --json=true`
 	if got != want {
 		t.Fatalf("args\n got: %s\nwant: %s", got, want)
 	}
@@ -197,7 +197,7 @@ func TestSaveActrcRoundTrip(t *testing.T) {
 	}
 	s := Default(t.TempDir())
 	s.Event = "workflow_dispatch"
-	s.Workflow = "workflow with spaces.yml"
+	s.Workflows = []string{"workflow with spaces.yml"}
 	s.Platforms = nil
 	s.Secrets = []string{"TOKEN=quote's $literal value"}
 	s.Env = []string{"MESSAGE=hello world"}

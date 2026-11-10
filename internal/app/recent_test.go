@@ -31,8 +31,8 @@ func TestRecentPersistsAndSkipsMissing(t *testing.T) {
 
 	a := newApp()
 	a.recentPath = path
-	a.setDir(gone)
-	a.setDir(keep)
+	a.openProject(gone)
+	a.openProject(keep)
 
 	b := newApp()
 	b.recent = loadRecent(path)
@@ -57,17 +57,17 @@ func TestRecentListOnFirstScreen(t *testing.T) {
 		t.Fatalf("click recent: %v", err)
 	}
 	tt.Frame()
-	if a.settings.Dir != dir {
-		t.Fatalf("Dir = %q, want %q", a.settings.Dir, dir)
+	if a.current == nil || a.current.settings.Dir != dir {
+		t.Fatalf("recent project not opened: %+v", a.current)
 	}
 }
 
 func TestRunButtonHiddenUnlessRunnable(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	frame := func() *ui.Tester {
 		tt := ui.NewTester(func(c *ui.Context) {
 			c.SetTheme(designTheme(c))
-			a.headerActions(c)
+			a.app.headerActions(c)
 		}, 1120, 720)
 		tt.Frame()
 		return tt

@@ -12,7 +12,7 @@ import (
 )
 
 func TestSidebarEditors(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = "/tmp/project"
 	a.settings.Secrets = []string{"TOKEN=original=value"}
 	tt := ui.NewTester(func(c *ui.Context) {
@@ -114,8 +114,8 @@ func TestWorkflowMetadataAndJobSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte("on: [push, pull_request]\njobs:\n  test: {}\n  build: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a := newApp()
-	a.settings.Dir, a.settings.Workflow = dir, "ci.yml"
+	a := newTestSession()
+	a.settings.Dir, a.settings.Workflows = dir, []string{"ci.yml"}
 	a.workflows = []string{"ci.yml"}
 	a.loadWorkflow()
 	if a.workflowMeta != "2 jobs · on push, pull_request" || !slices.Equal(a.workflowJobs, []string{"build", "test"}) {
@@ -134,7 +134,7 @@ func TestWorkflowMetadataAndJobSelection(t *testing.T) {
 	if a.settings.Job != "test" {
 		t.Fatal("job menu did not apply the job ID")
 	}
-	a.settings.Workflow = "missing.yml"
+	a.settings.Workflows = []string{"missing.yml"}
 	a.loadWorkflow()
 	if a.workflowErr == "" || len(a.workflowJobs) != 0 {
 		t.Fatal("unreadable workflow retained stale metadata")
@@ -154,8 +154,8 @@ func TestWorkflowTriggerForms(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "ci.yml"), []byte(tc.source), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			a := newApp()
-			a.settings.Dir, a.settings.Workflow = dir, "ci.yml"
+			a := newTestSession()
+			a.settings.Dir, a.settings.Workflows = dir, []string{"ci.yml"}
 			a.loadWorkflow()
 			if a.workflowMeta != tc.want || (a.workflowErr != "") != (tc.name == "invalid") {
 				t.Fatalf("metadata=%q, error=%q", a.workflowMeta, a.workflowErr)
@@ -165,7 +165,7 @@ func TestWorkflowTriggerForms(t *testing.T) {
 }
 
 func TestSaveSettingsButton(t *testing.T) {
-	a := newApp()
+	a := newTestSession()
 	a.settings.Dir = t.TempDir()
 	a.settings.Event = "release"
 	tt := ui.NewTester(func(c *ui.Context) {

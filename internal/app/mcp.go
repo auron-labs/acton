@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -30,8 +31,8 @@ type runSnapshot struct {
 	Output  act.Run   `json:"output"`
 }
 
-func (a *App) snapshot() runSnapshot {
-	return runSnapshot{ID: a.runID, Project: a.runDir, Started: a.started, Status: a.overallStatus().String(), Error: a.runErr, Output: a.run}
+func (s *Session) snapshot() runSnapshot {
+	return runSnapshot{ID: s.runID, Project: s.runDir, Started: s.started, Status: s.overallStatus().String(), Error: s.runErr, Output: s.run}
 }
 
 // mcpCall serializes both state access and JSON encoding on the UI thread.
@@ -70,19 +71,59 @@ func (a *App) mcpCall(ctx context.Context, dispatch func(func()), action func() 
 	}
 }
 
+// mcpSession finds the session a tool call targets: the named project, or the
+// selected tab. With open set, a project that is not open yet gets a tab
+// without taking focus.
+func (a *App) mcpSession(project string, open bool) (*Session, error) {
+	if project == "" {
+		switch {
+		case a.current != nil:
+			return a.current, nil
+		case len(a.sessions) == 1:
+			return a.sessions[0], nil
+		}
+		return nil, errors.New("no project is selected: pass the project directory")
+	}
+	if !filepath.IsAbs(project) {
+		return nil, errors.New("project must be an absolute directory path")
+	}
+	if s := a.sessionFor(project); s != nil {
+		return s, nil
+	}
+	if !open {
+		return nil, errors.New("project is not open: call update_settings or start_run with it first")
+	}
+	if info, err := os.Stat(project); err != nil || !info.IsDir() {
+		return nil, errors.New("project must be an existing directory")
+	}
+	return a.addSession(project), nil
+}
+
+// projectInput selects the project a tool acts on.
+type projectInput struct {
+	Project string `json:"project,omitempty" jsonschema:"Absolute project directory; defaults to the selected project tab."`
+}
+
 func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 	s := mcp.NewServer(&mcp.Implementation{Name: "acton", Version: "0.1.0"}, nil)
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	mcp.AddTool(s, &mcp.Tool{Name: "list_runs", Description: "List runs from this desktop session, including the current run.", Annotations: readOnly},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "list_runs", Description: "List runs from this desktop session across all projects, including current runs. Pass project to list one project's runs.", Annotations: readOnly},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (*mcp.CallToolResult, any, error) {
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
-				if a.running {
-					a.pump()
-				}
 				runs := slices.Clone(a.history)
-				if a.runID != 0 {
-					runs = append(runs, a.snapshot())
+				for _, session := range a.sessions {
+					if session.running {
+						session.pump()
+					}
+					if session.runID != 0 {
+						runs = append(runs, session.snapshot())
+					}
 				}
+				if in.Project != "" {
+					want := canonicalDir(in.Project)
+					runs = slices.DeleteFunc(runs, func(run runSnapshot) bool { return canonicalDir(run.Project) != want })
+				}
+				slices.SortFunc(runs, func(x, y runSnapshot) int { return x.ID - y.ID })
 				for i := range runs {
 					runs[i].Output = act.Run{}
 				}
@@ -90,66 +131,105 @@ func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 			})
 		})
 	type runInput struct {
-		ID int `json:"id,omitempty" jsonschema:"Run ID from list_runs; omit for the current or latest run."`
+		Project string `json:"project,omitempty" jsonschema:"Absolute project directory; defaults to the selected project tab. Ignored when id is set."`
+		ID      int    `json:"id,omitempty" jsonschema:"Run ID from list_runs; omit for the project's current or latest run."`
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "get_run", Description: "Read a run's jobs, steps, masked output, and runner errors. Status values in output: 0 pending, 1 running, 2 success, 3 failure, 4 skipped, 5 cancelled.", Annotations: readOnly},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in runInput) (*mcp.CallToolResult, any, error) {
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
-				if a.running {
-					a.pump()
+				var project string
+				if in.ID == 0 {
+					session, err := a.mcpSession(in.Project, false)
+					if err != nil {
+						return nil, err
+					}
+					if session.running {
+						session.pump()
+					}
+					if session.runID != 0 {
+						return session.snapshot(), nil
+					}
+					project = canonicalDir(session.settings.Dir)
 				}
-				if a.runID != 0 && (in.ID == 0 || in.ID == a.runID) {
-					return a.snapshot(), nil
+				for _, session := range a.sessions {
+					if session.running {
+						session.pump()
+					}
+					if session.runID != 0 && session.runID == in.ID {
+						return session.snapshot(), nil
+					}
 				}
 				for _, run := range slices.Backward(a.history) {
-					if in.ID == 0 || run.ID == in.ID {
+					if run.ID == in.ID || (in.ID == 0 && canonicalDir(run.Project) == project) {
 						return run, nil
 					}
 				}
 				return nil, errors.New("run not found")
 			})
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "start_run", Description: "Start a workflow using the desktop's current settings. Rejects concurrent runs. Workflow commands can modify files and use Docker or the network."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "start_run", Description: "Start a project's workflows using its current settings. Runs for different projects can overlap; a project rejects a second concurrent run. Workflow commands can modify files and use Docker or the network."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (*mcp.CallToolResult, any, error) {
 			//nolint:contextcheck // A started workflow outlives this HTTP request; stop_run cancels it explicitly.
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
-				if a.running || a.settings.Dir == "" {
-					return nil, errors.New("choose a project and wait for any active run to finish")
+				session, err := a.mcpSession(in.Project, true)
+				if err != nil {
+					return nil, err
 				}
-				if len(a.workflows) == 0 {
+				if session.running {
+					return nil, errors.New("wait for the project's active run to finish")
+				}
+				if len(session.workflows) == 0 {
 					return nil, errors.New("no GitHub Actions workflow files found in this project")
 				}
-				a.startRun()
-				if !a.running {
-					return nil, errors.New(a.runErr)
+				session.startRun()
+				if !session.running {
+					return nil, errors.New(session.runErr)
 				}
-				return a.snapshot(), nil
+				return session.snapshot(), nil
 			})
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "stop_run", Description: "Cancel the active run, allowing post steps and cleanup."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(s, &mcp.Tool{Name: "stop_run", Description: "Cancel a project's active run, allowing post steps and cleanup."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (*mcp.CallToolResult, any, error) {
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
-				a.stopRun()
-				return map[string]bool{"stopping": a.running}, nil
+				session, err := a.mcpSession(in.Project, false)
+				if err != nil {
+					return nil, err
+				}
+				session.stopRun()
+				return map[string]bool{"stopping": session.running}, nil
 			})
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "get_settings", Description: "Read current desktop settings. Secret values are redacted; omit those fields when updating to preserve them.", Annotations: readOnly},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-			return a.mcpCall(ctx, dispatch, func() (any, error) { return a.settingsSnapshot(), nil })
+	mcp.AddTool(s, &mcp.Tool{Name: "get_settings", Description: "Read a project's current desktop settings. Secret values are redacted; omit those fields when updating to preserve them.", Annotations: readOnly},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in projectInput) (*mcp.CallToolResult, any, error) {
+			return a.mcpCall(ctx, dispatch, func() (any, error) {
+				session, err := a.mcpSession(in.Project, false)
+				if err != nil {
+					return nil, err
+				}
+				return session.settingsSnapshot(), nil
+			})
 		})
 	type settingsInput struct {
-		Patch map[string]json.RawMessage `json:"patch" jsonschema:"Fields to change: Dir, Workflow, Event, Job, Platforms, Arch, Secrets, SecretFile, Env, EnvFile, Vars, VarFile, Inputs, EventPayload, DryRun, Verbose, Pull, Reuse, Bind, Quiet, ExtraArgs. Omitted fields are preserved. Changing Dir loads that project's defaults first."`
+		Project string                     `json:"project,omitempty"`
+		Patch   map[string]json.RawMessage `json:"patch" jsonschema:"Fields to change: Dir, Workflows, Event, Job, Platforms, Arch, Secrets, SecretFile, Env, EnvFile, Vars, VarFile, Inputs, EventPayload, DryRun, Verbose, Pull, Reuse, Bind, Quiet, ExtraArgs. Omitted fields are preserved. Changing Dir loads that project's defaults first."`
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: "update_settings", Description: "Update desktop settings in memory. Rejects invalid flags and changes while a run is active. Use the desktop Save button to persist settings.", InputSchema: map[string]any{
+	mcp.AddTool(s, &mcp.Tool{Name: "update_settings", Description: "Update a project's desktop settings in memory, opening its tab if needed. Rejects invalid flags and changes while the project's run is active. Use the desktop Save button to persist settings.", InputSchema: map[string]any{
 		"type": "object", "required": []string{"patch"}, "additionalProperties": false,
-		"properties": map[string]any{"patch": map[string]any{"type": "object", "additionalProperties": true}},
+		"properties": map[string]any{
+			"project": map[string]any{"type": "string", "description": "Absolute project directory; defaults to the selected project tab."},
+			"patch":   map[string]any{"type": "object", "additionalProperties": true},
+		},
 	}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in settingsInput) (*mcp.CallToolResult, any, error) {
 			return a.mcpCall(ctx, dispatch, func() (any, error) {
-				if err := a.updateSettings(in.Patch); err != nil {
+				session, err := a.mcpSession(in.Project, true)
+				if err != nil {
 					return nil, err
 				}
-				return a.settingsSnapshot(), nil
+				if err := session.updateSettings(in.Patch); err != nil {
+					return nil, err
+				}
+				return session.settingsSnapshot(), nil
 			})
 		})
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true})
@@ -158,24 +238,24 @@ func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 	return mux
 }
 
-func (a *App) settingsSnapshot() settings.Settings {
-	s := a.settings
-	s.Secrets = slices.Clone(s.Secrets)
-	for i, secret := range s.Secrets {
+func (s *Session) settingsSnapshot() settings.Settings {
+	snapshot := s.settings
+	snapshot.Secrets = slices.Clone(snapshot.Secrets)
+	for i, secret := range snapshot.Secrets {
 		name, _, _ := strings.Cut(secret, "=")
-		s.Secrets[i] = name + "=••••••••"
+		snapshot.Secrets[i] = name + "=••••••••"
 	}
-	if args, err := shellquote.Split(s.ExtraArgs); err == nil {
+	if args, err := shellquote.Split(snapshot.ExtraArgs); err == nil {
 		redactArgs(args)
-		s.ExtraArgs = shellquote.Join(args...)
+		snapshot.ExtraArgs = shellquote.Join(args...)
 	} else {
-		s.ExtraArgs = "<invalid extra arguments>"
+		snapshot.ExtraArgs = "<invalid extra arguments>"
 	}
-	return s
+	return snapshot
 }
 
-func (a *App) updateSettings(patch map[string]json.RawMessage) error {
-	if a.running {
+func (s *Session) updateSettings(patch map[string]json.RawMessage) error {
+	if s.running {
 		return errors.New("cannot change settings while a run is active")
 	}
 	for name, value := range patch {
@@ -198,12 +278,16 @@ func (a *App) updateSettings(patch map[string]json.RawMessage) error {
 		// Decoder errors can include user-supplied values; never echo secrets.
 		return errors.New("invalid settings patch: check field names and value types")
 	}
-	candidate := a.settings
+	candidate := s.settings
 	if changes.Dir != "" && changes.Dir != candidate.Dir {
+		if other := s.app.sessionFor(changes.Dir); other != nil && other != s {
+			return errors.New("dir is already open in another project tab")
+		}
 		candidate = *settings.Default(changes.Dir)
 		candidate.LoadActrc()
 	}
 	candidate.Platforms = slices.Clone(candidate.Platforms)
+	candidate.Workflows = slices.Clone(candidate.Workflows)
 	candidate.Secrets = slices.Clone(candidate.Secrets)
 	candidate.Env = slices.Clone(candidate.Env)
 	candidate.Vars = slices.Clone(candidate.Vars)
@@ -223,16 +307,16 @@ func (a *App) updateSettings(patch map[string]json.RawMessage) error {
 	if err := act.Validate(candidate.Dir, args); err != nil {
 		return errors.New("invalid act flags in settings")
 	}
-	if candidate.Dir != a.settings.Dir {
-		a.clearRun()
+	if candidate.Dir != s.settings.Dir {
+		s.clearRun()
 	}
-	a.settings = candidate
-	a.eventSel, a.eventOther = candidate.Event, candidate.Event
-	if !contains(workflowEvents, a.eventSel) {
-		a.eventSel = "custom"
+	s.settings = candidate
+	s.eventSel, s.eventOther = candidate.Event, candidate.Event
+	if !contains(workflowEvents, s.eventSel) {
+		s.eventSel = "custom"
 	}
-	a.fileErr = ""
-	a.rescanWorkflows()
+	s.fileErr = ""
+	s.rescanWorkflows()
 	return nil
 }
 
