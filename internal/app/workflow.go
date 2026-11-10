@@ -18,6 +18,7 @@ const workflowJobKey = "\x00workflow"
 type workflowSource struct {
 	name  string // path relative to the project
 	lines []string
+	segs  [][]yamlSegment // syntax-highlighted lines
 	err   string
 	list  components.ListState
 }
@@ -49,6 +50,7 @@ func (s *Session) workflowSources() []*workflowSource {
 		} else {
 			text := strings.TrimSuffix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 			source.lines = strings.Split(text, "\n")
+			source.segs = highlightYAML(source.lines)
 		}
 		sources = append(sources, source)
 	}
@@ -101,7 +103,7 @@ func (s *Session) workflowPane(c *ui.Context) {
 		components.List(c.Key(source.name), &source.list, len(source.lines), func(i int) {
 			ui.Row(c).FillWidth().Padding(0, t.Space(3)).Gap(t.Space(3)).Children(func() {
 				components.Text(c, strconv.Itoa(i+1)).Font("JetBrains Mono").FontSize(12).TextColor(t.TextMuted).TextAlign(ui.End).Width(width).Shrink(0).SingleLine()
-				ui.Text(c, source.lines[i]).Font("JetBrains Mono").FontSize(12).Selectable()
+				ui.RichText(c, yamlSpans(t, source.lines[i], source.segs[i])...).Font("JetBrains Mono").FontSize(12).Selectable()
 			})
 		}).Fill().Label("Workflow source")
 	})
