@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -65,9 +66,20 @@ type Settings struct {
 	secretFileSet, envFileSet, varFileSet bool
 }
 
-// DefaultImage is the container image mapped to ubuntu-latest and pre-filled
-// for new runner mappings.
+// DefaultImage is the container image mapped to ubuntu-latest and suggested for
+// runner labels that have no mapping.
 const DefaultImage = "catthehacker/ubuntu:act-latest"
+
+var ubuntuVersionLabel = regexp.MustCompile(`^ubuntu-(\d+\.\d+)$`)
+
+// SuggestImage proposes a container image for a runner label: the matching
+// catthehacker Ubuntu image for versioned Ubuntu labels, else DefaultImage.
+func SuggestImage(label string) string {
+	if m := ubuntuVersionLabel.FindStringSubmatch(strings.ToLower(label)); m != nil {
+		return "catthehacker/ubuntu:act-" + m[1]
+	}
+	return DefaultImage
+}
 
 // Default returns settings used when no .actrc provides a value.
 // The platform default avoids act's interactive first-run image prompt.

@@ -21,6 +21,34 @@ func (s *Session) view(c *ui.Context) {
 	}
 	components.Split(c, &s.cfgW, func() { s.configView(c) }, func() { s.runView(c) },
 		components.SplitOptions{FirstMin: 260, SecondMin: 160 + 1 + 260, Default: 320}).Fill()
+	s.mappingDialog(c)
+}
+
+// mappingDialog asks for images for runner labels that would otherwise make
+// act skip their jobs, then adds them to the session's platform mappings.
+func (s *Session) mappingDialog(c *ui.Context) {
+	t := c.Theme()
+	components.Dialog(c.Key("mapping-dialog"), &s.mappingOpen, components.DialogOptions{Label: "Map runner labels"}, func(ui.Element) {
+		components.Text(c, "Runner labels need an image").FontSize(t.Rem(16.0 / 13)).Bold()
+		components.Text(c, "These jobs would be skipped because no container image is mapped to their runs-on label. Edit the images, then add the mappings and run.").
+			TextColor(t.TextMuted)
+		for i := range s.mappingPrompt {
+			m := &s.mappingPrompt[i]
+			ui.Column(c.Key(i)).FillWidth().Gap(t.Space(1)).Children(func() {
+				components.Text(c, m.Label).Font("JetBrains Mono").FontSize(t.Rem(12.0 / 13)).SingleLine()
+				styleConfigInput(c, components.TextBox(c, &m.Image, components.TextBoxOptions{}).Label("Image for "+m.Label))
+			})
+		}
+		ui.Row(c).FillWidth().Gap(t.Space(2)).Children(func() {
+			ui.Box(c).Grow(1)
+			if components.Button(c, "Cancel", components.ButtonSecondary).Clicked() {
+				s.mappingOpen = false
+			}
+			if components.Button(c, "Add mappings and run", components.ButtonPrimary).Clicked() {
+				s.acceptMappings()
+			}
+		})
+	})
 }
 
 // runView is the right pane: jobs list beside the selected job's log, or a
@@ -74,7 +102,7 @@ func (s *Session) emptyRunView(c *ui.Context) {
 			})
 		})
 		if run.Clicked() {
-			s.startRun()
+			s.requestRun()
 		}
 	})
 }

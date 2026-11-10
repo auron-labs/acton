@@ -140,12 +140,7 @@ func parseOptions(dir string, args []string) (*options, error) {
 	c.ActionCacheDir = resolvePath(c.Workdir, c.ActionCacheDir)
 	c.ArtifactServerPath = resolvePath(c.Workdir, c.ArtifactServerPath)
 	o.cachePath = resolvePath(c.Workdir, o.cachePath)
-	c.Platforms = map[string]string{
-		"ubuntu-latest": "node:16-buster-slim",
-		"ubuntu-22.04":  "node:16-bullseye-slim",
-		"ubuntu-20.04":  "node:16-buster-slim",
-		"ubuntu-18.04":  "node:16-buster-slim",
-	}
+	c.Platforms = builtinPlatforms()
 	for _, platform := range o.platforms {
 		name, image, ok := strings.Cut(platform, "=")
 		if !ok || name == "" || image == "" {
@@ -183,6 +178,16 @@ func parseOptions(dir string, args []string) (*options, error) {
 		}
 	}
 	return o, nil
+}
+
+// builtinPlatforms is act's own fallback runner-to-image map.
+func builtinPlatforms() map[string]string {
+	return map[string]string{
+		"ubuntu-latest": "node:16-buster-slim",
+		"ubuntu-22.04":  "node:16-bullseye-slim",
+		"ubuntu-20.04":  "node:16-buster-slim",
+		"ubuntu-18.04":  "node:16-buster-slim",
+	}
 }
 
 func resolvePath(dir, path string) string {

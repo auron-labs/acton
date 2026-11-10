@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,23 @@ func projectWithRunner(t *testing.T, runsOn string) *Session {
 	s := newTestSession()
 	s.setDir(dir)
 	return s
+}
+
+func TestUnmappedRunnerLabel(t *testing.T) {
+	s := projectWithRunner(t, "ubuntu-24.04")
+	s.requestRun()
+	if s.running || !s.mappingOpen || len(s.mappingPrompt) != 1 ||
+		s.mappingPrompt[0] != (mappingSuggestion{"ubuntu-24.04", "catthehacker/ubuntu:act-24.04"}) {
+		t.Fatalf("prompt not shown: open=%v %+v", s.mappingOpen, s.mappingPrompt)
+	}
+	err := s.startRunChecked()
+	if err == nil || s.running || !strings.Contains(err.Error(), "-P ubuntu-24.04=catthehacker/ubuntu:act-24.04") {
+		t.Fatalf("non-interactive error: %v", err)
+	}
+	s = projectWithRunner(t, "ubuntu-latest")
+	if labels := s.unmappedLabels(); len(labels) != 0 {
+		t.Fatalf("mapped label reported: %v", labels)
+	}
 }
 
 func TestUnsavedSettingsNotice(t *testing.T) {

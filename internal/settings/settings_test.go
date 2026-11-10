@@ -282,3 +282,17 @@ func TestSaveActrcFailurePreservesFile(t *testing.T) {
 		}
 	}
 }
+
+func TestSuggestImage(t *testing.T) {
+	for label, want := range map[string]string{
+		"ubuntu-22.04":     "catthehacker/ubuntu:act-22.04",
+		"Ubuntu-24.04":     "catthehacker/ubuntu:act-24.04",
+		"ubuntu-latest":    DefaultImage,
+		"ubuntu-24.04-arm": DefaultImage,
+		"self-hosted":      DefaultImage,
+	} {
+		if got := SuggestImage(label); got != want {
+			t.Errorf("SuggestImage(%q) = %q, want %q", label, got, want)
+		}
+	}
+}

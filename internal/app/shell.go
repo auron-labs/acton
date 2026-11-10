@@ -103,7 +103,7 @@ func (a *App) headerActions(c *ui.Context) {
 				})
 			})
 			if run.Clicked() {
-				s.startRun()
+				s.requestRun()
 			}
 		}
 	})

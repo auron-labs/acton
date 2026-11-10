@@ -107,7 +107,9 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 			}
 		}
 		if runNow && a.current != nil {
-			a.current.startRun()
+			if err := a.current.startRunChecked(); err != nil {
+				a.current.runErr = err.Error()
+			}
 		}
 	})
 	if err := mygo.App.Run(); err != nil {

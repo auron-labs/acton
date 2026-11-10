@@ -181,7 +181,9 @@ func (a *App) mcpHandler(dispatch func(func())) http.Handler {
 				if len(session.workflows) == 0 {
 					return nil, errors.New("no GitHub Actions workflow files found in this project")
 				}
-				session.startRun()
+				if err := session.startRunChecked(); err != nil {
+					return nil, err
+				}
 				if !session.running {
 					return nil, errors.New(session.runErr)
 				}

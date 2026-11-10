@@ -38,6 +38,9 @@ type Session struct {
 	fileErr      string
 	savedArgs    string // resolved settings as last loaded from or saved to .actrc
 
+	mappingOpen   bool // runner-label prompt shown before a run
+	mappingPrompt []mappingSuggestion
+
 	run     act.Run
 	runner  *act.Runner
 	running bool
@@ -289,9 +292,70 @@ func (s *Session) settingsUnsaved() bool {
 	return s.settings.Dir != "" && err == nil && key != s.savedArgs
 }
 
+// mappingSuggestion is an unmapped runner label with an editable image.
+type mappingSuggestion struct{ Label, Image string }
+
+// unmappedLabels lists the runner labels of the jobs about to run that have no image.
+func (s *Session) unmappedLabels() []string {
+	return act.UnmappedLabels(s.settings.Dir, s.settings.Workflows, s.settings.Event, s.settings.Job, s.settings.Platforms)
+}
+
+// unmappedLabelsError is the non-interactive report: labels plus the -P values to add.
+func unmappedLabelsError(labels []string) error {
+	hints := make([]string, len(labels))
+	for i, l := range labels {
+		hints[i] = "-P " + l + "=" + settings.SuggestImage(l)
+	}
+	return fmt.Errorf("no image mapped for runner label(s) %s; add platform mappings such as %s and retry",
+		strings.Join(labels, ", "), strings.Join(hints, " "))
+}
+
+// requestRun is the UI entry point: runner labels without an image open the
+// mapping prompt instead of letting act silently skip those jobs.
+func (s *Session) requestRun() {
+	if !s.runnable() {
+		return
+	}
+	labels := s.unmappedLabels()
+	if len(labels) == 0 {
+		s.startRun()
+		return
+	}
+	s.mappingPrompt = s.mappingPrompt[:0]
+	for _, l := range labels {
+		s.mappingPrompt = append(s.mappingPrompt, mappingSuggestion{l, settings.SuggestImage(l)})
+	}
+	s.mappingOpen = true
+}
+
+// startRunChecked is the non-interactive entry point: it never prompts and
+// reports unmapped runner labels as an error.
+func (s *Session) startRunChecked() error {
+	if labels := s.unmappedLabels(); len(labels) > 0 {
+		return unmappedLabelsError(labels)
+	}
+	s.startRun()
+	return nil
+}
+
+// acceptMappings adds the prompted mappings to the session and starts the run.
+func (s *Session) acceptMappings() {
+	s.mappingOpen = false
+	for _, m := range s.mappingPrompt {
+		if image := strings.TrimSpace(m.Image); image != "" {
+			s.settings.Platforms = append(s.settings.Platforms, m.Label+"="+image)
+		}
+	}
+	s.startRun()
+}
+
+func (s *Session) runnable() bool {
+	return !s.running && s.settings.Dir != "" && len(s.workflows) > 0
+}
+
 // startRun launches act with the current settings.
 func (s *Session) startRun() {
-	if s.running || s.settings.Dir == "" || len(s.workflows) == 0 {
+	if !s.runnable() {
 		return
 	}
 	s.clearRun()
