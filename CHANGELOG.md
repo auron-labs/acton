@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/auron-labs/acton/compare/v0.2.0...v0.2.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **ci:** attach release assets before publishing the release ([5b2ada4](https://github.com/auron-labs/acton/commit/5b2ada48aaa3b3ee6f894c16f36318c9daee56ae))
+
 ## [0.2.0](https://github.com/auron-labs/acton/compare/v0.1.0...v0.2.0) (2026-11-11)
 
 
