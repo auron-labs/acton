@@ -1,0 +1,52 @@
+--- a/repository_extensions.go
++++ b/repository_extensions.go
+@@ -40,16 +40,23 @@
+ 		// noop-v1 does not change git’s behavior at all.
+ 		// It is useful only for testing format-1 compatibility.
+ 		"noop-v1": {},
++
++		// worktreeconfig enables per-worktree config.worktree overrides.
++		// They are ignored but don't prevent opening the repository; git
++		// enables this automatically on sparse-checkout.
++		"worktreeconfig": {},
+ 	}
+ 
+ 	// Some Git extensions were supported upstream before the introduction
+ 	// of repositoryformatversion. These are the only extensions that can be
+ 	// enabled while core.repositoryformatversion is unset or set to 0.
++	//
++	// Keys must be lowercase to match extensions(), which uses strings.ToLower.
+ 	extensionsValidForV0 = map[string]struct{}{
+ 		"noop":            {},
+-		"partialClone":    {},
+-		"preciousObjects": {},
+-		"worktreeConfig":  {},
++		"partialclone":    {},
++		"preciousobjects": {},
++		"worktreeconfig":  {},
+ 	}
+ )
+ 
+--- a/repository_extensions_test.go
++++ b/repository_extensions_test.go
+@@ -42,6 +42,20 @@
+ 			},
+ 		},
+ 		{
++			name: "repositoryformatversion=0: allows worktreeConfig",
++			setup: func(t *testing.T, cfg *config.Config) {
++				cfg.Core.RepositoryFormatVersion = formatcfg.Version_0
++				cfg.Raw.Section("extensions").SetOption("worktreeConfig", "true")
++			},
++		},
++		{
++			name: "repositoryformatversion=1: allows worktreeConfig",
++			setup: func(t *testing.T, cfg *config.Config) {
++				cfg.Core.RepositoryFormatVersion = formatcfg.Version_1
++				cfg.Raw.Section("extensions").SetOption("worktreeConfig", "true")
++			},
++		},
++		{
+ 			name: "repositoryformatversion=1: rejects unknown extensions",
+ 			setup: func(t *testing.T, cfg *config.Config) {
+ 				cfg.Core.RepositoryFormatVersion = formatcfg.Version_1

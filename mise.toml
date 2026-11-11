@@ -12,14 +12,45 @@ pkl = "0.32.2"
 [env]
 BETTERLEAKS_CONFIG = "{{ config_root }}/.betterleaks.toml"
 
-[tasks]
-dev = "go tool mygo dev"
-build = "go tool mygo build"
-test = "go test ./..."
-lint = "golangci-lint run ./..."
-check = "hk check --all"
-fix = "hk fix --all"
+[tasks.setup-go-git]
+description = "Generate third_party/go-git (pinned version plus local patch)"
+run = "scripts/setup-go-git.sh"
+
+[tasks.update-go-git]
+description = "Bump the pinned go-git version: update-go-git [version|latest]"
+run = "scripts/update-go-git.sh"
+
+[tasks.dev]
+description = "Run the app in development mode with live reload"
+run = "go tool mygo dev"
+depends = ["setup-go-git"]
+
+[tasks.build]
+description = "Build the macOS app bundle into build/"
+run = "go tool mygo build"
+depends = ["setup-go-git"]
+
+[tasks.test]
+description = "Run all Go tests"
+run = "go test ./..."
+depends = ["setup-go-git"]
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run ./..."
+depends = ["setup-go-git"]
+
+[tasks.check]
+description = "Run all hk checks (format, lint, tidy, secrets) without fixing"
+run = "hk check --all"
+depends = ["setup-go-git"]
+
+[tasks.fix]
+description = "Run all hk checks and apply automatic fixes"
+run = "hk fix --all"
+depends = ["setup-go-git"]
 
 [tasks."build:run"]
+description = "Build and open the macOS app"
 run = "open build/darwin-arm64/acton.app"
 depends = ["build"]

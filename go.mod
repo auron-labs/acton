@@ -4,6 +4,7 @@ go 1.27.3
 
 require (
 	github.com/egoist/mygo v0.8.3
+	github.com/go-git/go-git/v5 v5.19.3
 	github.com/joho/godotenv v1.5.1
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/moby/moby/api v1.56.1
@@ -42,7 +43,6 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.2 // indirect
-	github.com/go-git/go-git/v5 v5.19.3 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
@@ -103,3 +103,5 @@ require (
 )
 
 tool github.com/egoist/mygo/cmd/mygo
+
+replace github.com/go-git/go-git/v5 => ./third_party/go-git

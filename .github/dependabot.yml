@@ -6,6 +6,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Patched copy in third_party/go-git; upgrade with `mise run update-go-git`.
+      - dependency-name: github.com/go-git/go-git/v5
     groups:
       gomod-minor-patch:
         update-types:

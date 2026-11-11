@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	actgit "github.com/nektos/act/pkg/common/git"
 	"github.com/sirupsen/logrus"
 )
 
@@ -239,5 +242,62 @@ func TestRunnerArtifactServerFailure(t *testing.T) {
 	_, err = finishRunner(t, r, complete)
 	if err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "server failed") {
 		t.Fatalf("server failure misreported: %v", err)
+	}
+}
+
+func TestLogFormatterDropsGitExtensionErrors(t *testing.T) {
+	f := &logFormatter{}
+	drop := logrus.NewEntry(logrus.New()).WithError(fmt.Errorf("open: %w: worktreeconfig", git.ErrUnsupportedExtensionRepositoryFormatVersion))
+	drop.Message = "not located inside a git repository"
+	if out, err := f.Format(drop); err != nil || out != nil {
+		t.Fatalf("git extension error should be dropped, got %q, %v", out, err)
+	}
+	keep := logrus.NewEntry(logrus.New()).WithError(errors.New("boom"))
+	keep.Message = "other"
+	if out, err := f.Format(keep); err != nil || len(out) == 0 {
+		t.Fatalf("other errors must be kept, got %q, %v", out, err)
+	}
+}
+
+// TestGoGitPatchWorktreeConfigExtension guards the third_party/go-git patch
+// (see third_party/README.md): act's git.FindGitRevision must open repositories
+// that set extensions.worktreeConfig with core.repositoryformatversion unset.
+// It fails if the replace directive is dropped or the generated third_party/go-git is not patched.
+func TestGoGitPatchWorktreeConfigExtension(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("README"); err != nil {
+		t.Fatal(err)
+	}
+	sig := &object.Signature{Name: "t", Email: "t@example.com", When: time.Now()}
+	if _, err := wt.Commit("init", &git.CommitOptions{Author: sig}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := repo.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Raw.Section("extensions").SetOption("worktreeConfig", "true")
+	if err := repo.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	_, sha, err := actgit.FindGitRevision(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("FindGitRevision: %v", err)
+	}
+	if sha == "" {
+		t.Fatal("FindGitRevision returned empty SHA")
 	}
 }

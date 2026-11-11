@@ -46,6 +46,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Generate patched go-git
+        run: scripts/setup-go-git.sh
       - name: Check release destination and version
         shell: bash
         run: |

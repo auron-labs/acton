@@ -100,3 +100,4 @@ tmbootpicker.efi
 /build/
 /.mygo/
 mygo_windows_*.syso
+/third_party/go-git/

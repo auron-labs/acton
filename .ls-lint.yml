@@ -13,3 +13,4 @@ ignore:
   - .venv
   - target
   - vendor
+  - third_party

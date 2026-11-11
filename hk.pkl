@@ -29,6 +29,9 @@ local linters = new Mapping<String, Step> {
   ["trailing_whitespace"] = Builtins.trailing_whitespace
 }
 
+// Generated third-party code keeps its upstream formatting.
+exclude = "third_party/**"
+
 hooks {
   ["pre-commit"] {
     fix = true

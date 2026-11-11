@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/nektos/act/pkg/artifactcache"
 	"github.com/nektos/act/pkg/artifacts"
 	"github.com/nektos/act/pkg/common"
@@ -256,6 +257,9 @@ func (r *engine) fail(err error) {
 // Write accepts complete JSON records from act's loggers, without a pipe or
 // scanner size limit. JSON escapes newlines inside workflow output.
 func (r *engine) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	lines := strings.Split(strings.TrimSuffix(string(p), "\n"), "\n")
 	r.mu.Lock()
 	if !r.done {
@@ -304,6 +308,9 @@ type logFormatter struct {
 }
 
 func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	if isUnsupportedGitExtension(entry) {
+		return nil, nil
+	}
 	// Only act's job logger applies its secret masker before our formatter.
 	entry.Data["msg_masked"] = f.masked && entry.Data["job"] != nil
 	delete(entry.Data, "arg")
@@ -314,6 +321,13 @@ func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		return nil, fmt.Errorf("format act log: %w", err)
 	}
 	return data, nil
+}
+
+// isUnsupportedGitExtension reports go-git's repository extension errors, which
+// act logs when it cannot open a repository that uses a newer git extension.
+func isUnsupportedGitExtension(entry *logrus.Entry) bool {
+	err, ok := entry.Data[logrus.ErrorKey].(error)
+	return ok && (errors.Is(err, git.ErrUnsupportedExtensionRepositoryFormatVersion) || errors.Is(err, git.ErrUnknownExtension))
 }
 
 // plan builds one plan from every selected workflow. Stages from different
