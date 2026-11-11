@@ -38,7 +38,8 @@ type Session struct {
 	fileErr      string
 	savedArgs    string // resolved settings as last loaded from or saved to .actrc
 
-	mappingOpen   bool // runner-label prompt shown before a run
+	mappingOpen   bool   // runner-label prompt shown before a run
+	jobOnly       string // job id to run alone, instead of settings.Job, until the run starts or is cancelled
 	mappingPrompt []mappingSuggestion
 
 	run     act.Run
@@ -297,7 +298,18 @@ type mappingSuggestion struct{ Label, Image string }
 
 // unmappedLabels lists the runner labels of the jobs about to run that have no image.
 func (s *Session) unmappedLabels() []string {
-	return act.UnmappedLabels(s.settings.Dir, s.settings.Workflows, s.settings.Event, s.settings.Job, s.settings.Platforms)
+	st := s.runSettings()
+	return act.UnmappedLabels(st.Dir, st.Workflows, st.Event, st.Job, st.Platforms)
+}
+
+// runSettings is the settings the next run uses: the configured ones, narrowed
+// to a single job when one was requested from the job list.
+func (s *Session) runSettings() settings.Settings {
+	st := s.settings
+	if s.jobOnly != "" {
+		st.Job = s.jobOnly
+	}
+	return st
 }
 
 // unmappedLabelsError is the non-interactive report: labels plus the -P values to add.
@@ -312,10 +324,14 @@ func unmappedLabelsError(labels []string) error {
 
 // requestRun is the UI entry point: runner labels without an image open the
 // mapping prompt instead of letting act silently skip those jobs.
-func (s *Session) requestRun() {
+func (s *Session) requestRun() { s.requestJobRun("") }
+
+// requestJobRun is requestRun for a single job; "" runs the configured selection.
+func (s *Session) requestJobRun(jobID string) {
 	if !s.runnable() {
 		return
 	}
+	s.jobOnly = jobID
 	labels := s.unmappedLabels()
 	if len(labels) == 0 {
 		s.startRun()
@@ -331,6 +347,7 @@ func (s *Session) requestRun() {
 // startRunChecked is the non-interactive entry point: it never prompts and
 // reports unmapped runner labels as an error.
 func (s *Session) startRunChecked() error {
+	s.jobOnly = ""
 	if labels := s.unmappedLabels(); len(labels) > 0 {
 		return unmappedLabelsError(labels)
 	}
@@ -358,6 +375,8 @@ func (s *Session) startRun() {
 	if !s.runnable() {
 		return
 	}
+	st := s.runSettings()
+	s.jobOnly = ""
 	s.clearRun()
 	s.started = time.Now()
 	var err error
@@ -367,7 +386,7 @@ func (s *Session) startRun() {
 			s.app.preferenceErr = "Cannot save run output: " + err.Error()
 		}
 	}
-	args, err := s.settings.Args()
+	args, err := st.Args()
 	if err != nil {
 		s.runErr = err.Error()
 		s.writeRunFile(`{"msg":"act failed to start"}`)

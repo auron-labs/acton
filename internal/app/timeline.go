@@ -334,7 +334,7 @@ func (s *Session) stepOutput(c *ui.Context, row rowRef) {
 			if len(step.Annotations) > 0 && *tab == 0 {
 				components.ScrollView(c, components.ScrollViewOptions{}).Fill().MinHeight(0).Children(func() { annotationList(c, step.Annotations) })
 			} else {
-				components.List(c, state, len(step.Lines), func(i int) { s.logLineRow(c, rowRef{step: step, line: step.Lines[i]}) }).Fill().MinHeight(0)
+				components.List(c, state, len(step.Lines), func(i int) { s.logLineRow(c, rowRef{step: step, line: step.Lines[i]}) }).Fill().MinHeight(0).Selectable()
 			}
 		})
 	})

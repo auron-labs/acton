@@ -140,6 +140,7 @@ type Item struct {
 // Job is one act job stream, including its matrix variant.
 type Job struct {
 	Key         string
+	JobID       string // workflow job id, as accepted by act's -j
 	Name        string
 	Status      Status
 	Items       []Item
@@ -352,7 +353,7 @@ func (r *Run) job(e logEvent, at time.Time) *Job {
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
 	}
-	j := &Job{Key: key, Name: name, Status: StatusRunning, Started: at}
+	j := &Job{Key: key, JobID: e.JobID, Name: name, Status: StatusRunning, Started: at}
 	r.byKey[key] = j
 	r.Jobs = append(r.Jobs, j)
 	return j

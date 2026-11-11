@@ -43,6 +43,7 @@ func (s *Session) mappingDialog(c *ui.Context) {
 			ui.Box(c).Grow(1)
 			if components.Button(c, "Cancel", components.ButtonSecondary).Clicked() {
 				s.mappingOpen = false
+				s.jobOnly = ""
 			}
 			if components.Button(c, "Add mappings and run", components.ButtonPrimary).Clicked() {
 				s.acceptMappings()
@@ -236,6 +237,16 @@ func (s *Session) logPane(c *ui.Context, j *act.Job) {
 					components.Text(c, d).FontSize(11).TextColor(t.TextMuted).Font("JetBrains Mono").SingleLine().Shrink(0)
 				}
 			})
+			if !s.running && j.JobID != "" {
+				rerun := components.Button(c, "", components.ButtonGhost).Label("Re-run job " + j.Name)
+				rerun.Size(t.Space(7), t.Space(7)).Padding(0).Shrink(0).Children(func() {
+					components.Icon(c, lucide.RotateCw()).Size(t.Space(3.5), t.Space(3.5)).TextColor(t.TextMuted)
+				})
+				components.Tooltip(c, rerun, "Re-run this job")
+				if rerun.Clicked() {
+					s.requestJobRun(j.JobID)
+				}
+			}
 			ui.Segmented(c, &s.logMode, "Steps", "Raw log").Shrink(0).Label("Log view mode")
 		})
 		ui.Divider(c)
@@ -276,7 +287,7 @@ func (s *Session) stepsView(c *ui.Context, j *act.Job, axis timeAxis) {
 		case r.step != nil:
 			stepHeaderRow(c, r, axis)
 		default:
-			s.logLineRow(c, r)
+			s.logLineRow(c, r).Selectable()
 		}
 	}).Fill()
 }
@@ -285,7 +296,7 @@ func (s *Session) stepsView(c *ui.Context, j *act.Job, axis timeAxis) {
 func (s *Session) rawLogView(c *ui.Context, j *act.Job) {
 	rl := s.rawLogFor(j)
 	rl.list.FollowEnd = true
-	components.List(c, &rl.list, len(j.Raw), func(i int) { s.logLineRow(c, rowRef{line: j.Raw[i]}) }).Fill().Label("Raw act output")
+	components.List(c, &rl.list, len(j.Raw), func(i int) { s.logLineRow(c, rowRef{line: j.Raw[i]}) }).Fill().Label("Raw act output").Selectable()
 }
 
 // linesView renders a plain list of lines (runner output).
@@ -294,13 +305,13 @@ func (s *Session) linesView(c *ui.Context, lines []string) {
 	s.logUI.runner.FollowEnd = true
 	components.List(c, &s.logUI.runner, len(lines), func(i int) {
 		ui.Row(c).FillWidth().Padding(0, t.Space(3), 0, 0).Children(func() {
-			ui.Text(c, lines[i]).Font("JetBrains Mono").FontSize(12).Selectable()
+			ui.Text(c, lines[i]).Font("JetBrains Mono").FontSize(12)
 		})
-	}).Fill()
+	}).Fill().Selectable()
 }
 
 // logLineRow is one output line beneath a step header (or job level).
-func (s *Session) logLineRow(c *ui.Context, r rowRef) {
+func (s *Session) logLineRow(c *ui.Context, r rowRef) ui.Element {
 	t := c.Theme()
 	indent := float32(12)
 	if r.step == nil {
@@ -317,8 +328,8 @@ func (s *Session) logLineRow(c *ui.Context, r rowRef) {
 	case r.step == nil:
 		color = t.TextMuted
 	}
-	row.Children(func() {
-		ui.Text(c, r.line).Font("JetBrains Mono").FontSize(12).TextColor(color).Selectable()
+	return row.Children(func() {
+		ui.Text(c, r.line).Font("JetBrains Mono").FontSize(12).TextColor(color)
 	})
 }
 

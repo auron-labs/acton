@@ -1,10 +1,14 @@
 package app
 
 import (
+	"acton/internal/act"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func projectWithRunner(t *testing.T, runsOn string) *Session {
@@ -60,5 +64,34 @@ func TestUnsavedSettingsNotice(t *testing.T) {
 	s.setDir(s.settings.Dir)
 	if s.settingsUnsaved() {
 		t.Fatal("still unsaved after reload")
+	}
+}
+
+func TestRerunJobFromLogPane(t *testing.T) {
+	s := projectWithRunner(t, "ubuntu-24.04")
+	j := &act.Job{Key: "k", JobID: "a", Name: "a", Status: act.StatusFailure}
+	s.run.Jobs = []*act.Job{j}
+	tt := ui.NewTester(func(c *ui.Context) {
+		c.SetTheme(designTheme(c))
+		s.logPane(c, j)
+	}, 800, 400)
+	if err := tt.Click("Re-run job a"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.mappingOpen || s.jobOnly != "a" {
+		t.Fatalf("re-run did not target the job: open=%v job=%q", s.mappingOpen, s.jobOnly)
+	}
+	st := s.runSettings()
+	args, err := st.Args()
+	if err != nil || !slices.Contains(args, "-j") || !slices.Contains(args, "a") {
+		t.Fatalf("args do not select the job: %v %v", args, err)
+	}
+	if s.settings.Job != "" {
+		t.Fatalf("configured job filter changed: %q", s.settings.Job)
+	}
+	s.running = true
+	tt.Frame()
+	if tt.HasText("Re-run job a") {
+		t.Fatal("re-run offered while a run is active")
 	}
 }

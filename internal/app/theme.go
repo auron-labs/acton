@@ -63,6 +63,10 @@ func designPalette(c *ui.Context, dark bool) *ui.Theme {
 	t.AccentPressed = t.AccentHover.Mix(ui.RGB(0, 0, 0), .12)
 	t.AccentText = ui.Hex("#FFFFFF")
 	t.Selection = t.Accent.Alpha(.24)
+	if t.Dark {
+		// A translucent accent over the near-black output panels is barely visible.
+		t.Selection = t.Focus.Alpha(.5)
+	}
 	t.Scrollbar = t.TextMuted.Alpha(.5)
 	t.Radius = 6
 	t.Font = "Inter"
