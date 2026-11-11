@@ -130,7 +130,7 @@ The macOS app and disk image are written to `build/darwin-arm64/` on Apple silic
 ## Development
 
 Setup, checks, and commit conventions are in [CONTRIBUTING.md](CONTRIBUTING.md). To run from
-source (Go 1.27.3; Xcode command-line tools on macOS):
+source (Go 1.27.4; Xcode command-line tools on macOS):
 
 ```sh
 mise install
