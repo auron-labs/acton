@@ -2,6 +2,7 @@ package app
 
 import (
 	"acton/internal/act"
+	"acton/internal/dockertest"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 )
 
 func TestMCPDesktopControl(t *testing.T) {
+	dockertest.Require(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o750); err != nil {
 		t.Fatal(err)
@@ -181,6 +183,7 @@ func TestMCPQueuedRequestCancellation(t *testing.T) {
 }
 
 func TestMCPDrivesMultipleProjects(t *testing.T) {
+	dockertest.Require(t)
 	app := newApp()
 	first := app.openProject(newProject(t, "api"))
 	secondDir := newProject(t, "web")

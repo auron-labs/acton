@@ -4,5 +4,9 @@
   "identifier": "dev.acton.app",
   "icon": "assets/acton-logo.png",
   "version": "0.1.0",
-  "out": "build"
+  "out": "build",
+  "updates": {
+    "publicKey": "3yINU5P3yvCHuAnsVYEK6nAm1IxEswpqk02P3Wz7m5o=",
+    "github": "auron-labs/acton"
+  }
 }

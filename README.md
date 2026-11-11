@@ -7,16 +7,36 @@
 Run GitHub Actions workflows locally in a native desktop app. Acton embeds the
 `nektos/act` runner and shows jobs, steps, and their output alongside workflow settings.
 
-## Run from source
+## Install
 
-On macOS, install Go 1.27.3 and the Xcode command-line tools. Start Docker before
-running container-based workflows.
-
-From the repository root:
+On macOS or Linux, run the install script. It verifies the download against the app's update
+signing key and `SHA256SUMS`:
 
 ```sh
-go tool mygo dev
+curl -fsSL https://github.com/auron-labs/acton/releases/latest/download/install.sh | sh
 ```
+
+The Linux script needs OpenSSL 3.0 or later. Or download the build for your platform from the
+[GitHub Releases](https://github.com/auron-labs/acton/releases) page.
+
+| Platform | Asset |
+| --- | --- |
+| macOS (Apple silicon, Intel) | `acton-<version>-<arch>.dmg`; open it and drag Acton to Applications |
+| Linux, Debian-based | `acton_<version>_<arch>.deb` |
+| Linux, other | `acton-<version>-linux-<arch>.tar.gz`, which contains `install.sh` to install for your user under `~/.local` |
+
+Linux releases also include a `PKGBUILD` for Arch Linux (`makepkg -si`). Release builds are
+published for macOS arm64 and amd64 and Linux amd64 and arm64. Windows is not built.
+
+macOS builds are ad-hoc signed, not notarized, so Gatekeeper blocks the first launch.
+Control-click Acton and choose **Open**, or allow it under System Settings > Privacy & Security.
+
+Installed apps check GitHub Releases for signed updates and offer to install them. Copies
+installed by a package manager, such as the Debian package, are updated by it instead.
+
+Running workflows that use containers requires a running Docker engine.
+
+## Quick start
 
 Choose a project folder containing `.github/workflows`, tick the workflows to run
 (none selected runs every workflow triggered by the event), and click **Run**.
@@ -90,6 +110,15 @@ their display values back. Settings changes and concurrent starts for a project
 are rejected while its run is active. Use the desktop **Save** button to persist
 workflow settings to `.actrc`.
 
+## Troubleshooting
+
+- **Container workflows fail to start:** start your Docker engine and run again.
+- **MCP client cannot connect:** confirm Acton was started with `--mcp` and the client uses
+  the same port (default `7337`). Only numeric loopback addresses are accepted.
+- **Settings are not kept:** **Save** writes to the project's `.actrc`. Changes made without
+  saving, including through MCP `update_settings`, apply to the current session only.
+- **macOS says the app cannot be opened:** see the Gatekeeper note under [Install](#install).
+
 ## Build
 
 ```sh
@@ -97,3 +126,23 @@ go tool mygo build
 ```
 
 The macOS app and disk image are written to `build/darwin-arm64/` on Apple silicon.
+
+## Development
+
+Setup, checks, and commit conventions are in [CONTRIBUTING.md](CONTRIBUTING.md). To run from
+source (Go 1.27.3; Xcode command-line tools on macOS):
+
+```sh
+mise install
+mise run dev
+```
+
+For releases and auto-update setup, see [docs/RELEASING.md](docs/RELEASING.md).
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for supported versions and how to report a vulnerability.
+
+## License
+
+[MIT](LICENSE)

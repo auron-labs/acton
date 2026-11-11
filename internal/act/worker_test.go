@@ -1,6 +1,7 @@
 package act
 
 import (
+	"acton/internal/dockertest"
 	"context"
 	"errors"
 	"os"
@@ -35,6 +36,7 @@ func finishWorker(t *testing.T, r *Runner, complete <-chan struct{}) ([]string, 
 }
 
 func TestWorkerStreamsRun(t *testing.T) {
+	dockertest.Require(t)
 	dir := workflowProject(t, testWorkflow)
 	host, hostSet := os.LookupEnv("DOCKER_HOST")
 	r, complete := startWorker(t, dir, []string{"push", "-n", "-P", "ubuntu-latest=unused", "--no-cache-server"}, func() {})
@@ -67,6 +69,7 @@ func TestWorkerReportsErrors(t *testing.T) {
 }
 
 func TestWorkerStop(t *testing.T) {
+	dockertest.Require(t)
 	dir := workflowProject(t, strings.Replace(testWorkflow, `printf 'hello\n'`, `printf 'waiting\n'; exec sleep 60`, 1))
 	waiting := make(chan struct{}, 1)
 	var r *Runner
@@ -99,6 +102,7 @@ func TestWorkerStop(t *testing.T) {
 }
 
 func TestWorkersRunConcurrently(t *testing.T) {
+	dockertest.Require(t)
 	slow := strings.Replace(testWorkflow, `printf 'hello\n'`, `printf 'started\n'; sleep 2`, 1)
 	args := func() []string {
 		return []string{"push", "-P", "ubuntu-latest=-self-hosted", "--no-cache-server", "--action-cache-path", t.TempDir()}

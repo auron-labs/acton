@@ -2,6 +2,7 @@ package app
 
 import (
 	"acton/internal/act"
+	"acton/internal/dockertest"
 	"context"
 	"errors"
 	"fmt"
@@ -251,6 +252,7 @@ func TestMinimumWindowPreservesLogSpace(t *testing.T) {
 }
 
 func TestShutdownStopsRunAndWaitsForCleanup(t *testing.T) {
+	dockertest.Require(t)
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o750); err != nil {
 		t.Fatal(err)

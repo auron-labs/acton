@@ -1,0 +1,59 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  mygo:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # builds share one SHA256SUMS file
+      matrix:
+        include:
+          - os: macos-latest
+            platform: "darwin/arm64,darwin/amd64"
+          - os: ubuntu-latest
+            platform: "linux/amd64,linux/arm64"
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Check release destination and version
+        shell: bash
+        run: |
+          test "$(jq -r .updates.github mygo.json)" = "$GITHUB_REPOSITORY"
+          test "$(jq -r '.updates.s3 // empty' mygo.json)" = ""
+          test "$RELEASE_TAG" = "$(jq -r '.updates.tagPrefix // "v"' mygo.json)$(jq -r .version mygo.json)"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+      - name: Build and upload
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go tool mygo build -platform "${{ matrix.platform }}" -upload

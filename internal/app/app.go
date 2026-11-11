@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/egoist/mygo"
+	updater "github.com/egoist/mygo/plugins/updater/native"
 	"github.com/oneo-me/onevra/source/shells/plain"
 )
 
@@ -53,6 +54,8 @@ func Run(dir string, runNow bool, mcpAddr string) error {
 	if err := registerFonts(); err != nil {
 		return err
 	}
+	// Checks GitHub Releases for signed updates; development builds never check.
+	mygo.Use(updater.Plugin)
 	a := newApp()
 	a.preferencesPath = preferencesFile()
 	var prefErr error

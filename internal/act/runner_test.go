@@ -1,6 +1,7 @@
 package act
 
 import (
+	"acton/internal/dockertest"
 	"context"
 	"errors"
 	"fmt"
@@ -64,6 +65,7 @@ func finishRunner(t *testing.T, r *engine, complete <-chan struct{}) ([]string, 
 }
 
 func TestRunnerDoneWaitsForOutput(t *testing.T) {
+	dockertest.Require(t)
 	dir := workflowProject(t, testWorkflow)
 	previousHost, hostWasSet := os.LookupEnv("DOCKER_HOST")
 	t.Setenv("PATH", t.TempDir()) // No act executable, shell, or gh is available.
@@ -111,6 +113,7 @@ func TestRunnerDoneWaitsForOutput(t *testing.T) {
 
 // shortcut: act v0.2.89 has host PTY races/output loss; upgrade when upstream fixes them.
 func TestRunnerWorkflow(t *testing.T) {
+	dockertest.Require(t)
 	platforms := []string{"-self-hosted"}
 	if image := os.Getenv("ACTON_TEST_IMAGE"); image != "" {
 		platforms = append(platforms, image)
@@ -155,6 +158,7 @@ func TestRunnerWorkflow(t *testing.T) {
 }
 
 func TestRunnerStop(t *testing.T) {
+	dockertest.Require(t)
 	dir := workflowProject(t, strings.Replace(testWorkflow, `printf 'hello\n'`, `printf 'waiting\n'; exec sleep 60`, 1))
 	waiting := make(chan struct{})
 	var once sync.Once
@@ -219,6 +223,7 @@ func TestRunnerLargeOutput(t *testing.T) {
 }
 
 func TestRunnerArtifactServerFailure(t *testing.T) {
+	dockertest.Require(t)
 	var lc net.ListenConfig
 	listener, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
