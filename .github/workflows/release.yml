@@ -64,3 +64,19 @@ jobs:
         env:
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
         run: go tool mygo build -platform "${{ matrix.platform }}" -upload
+
+  publish:
+    needs: [release-please, mygo]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh release edit "${{ needs.release-please.outputs.tag_name }}" --repo "$GITHUB_REPOSITORY" --draft=false
