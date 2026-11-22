@@ -1,27 +1,20 @@
 version: 2
+
+multi-ecosystem-groups:
+  dependencies:
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
 updates:
   - package-ecosystem: gomod
     directory: "/"
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: "chore(deps)"
+    multi-ecosystem-group: dependencies
+    patterns: ["*"]
     ignore:
       # Patched copy in third_party/go-git; upgrade with `mise run update-go-git`.
       - dependency-name: github.com/go-git/go-git/v5
-    groups:
-      gomod-minor-patch:
-        update-types:
-          - minor
-          - patch
   - package-ecosystem: github-actions
     directory: "/"
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: "chore(deps)"
-    groups:
-      github-actions-minor-patch:
-        update-types:
-          - minor
-          - patch
+    multi-ecosystem-group: dependencies
+    patterns: ["*"]
