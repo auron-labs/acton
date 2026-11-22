@@ -7,6 +7,8 @@
 Run GitHub Actions workflows locally in a native desktop app. Acton embeds the
 `nektos/act` runner and shows jobs, steps, and their output alongside workflow settings.
 
+[![Listed on Awesome MyGo](https://awesomemygo.dev/badge.svg)](https://awesomemygo.dev/apps/acton)
+
 ## Install
 
 On macOS or Linux, run the install script. It verifies the download against the app's update
